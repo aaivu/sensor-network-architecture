@@ -1,0 +1,3 @@
+timestamp,devEUI,fcnt,tx_power_dBm,sf,bw,cr,tx_x,tx_y,tx_z,pre_tx_rssi_dBm,ambient_noise_dBm,expected_rx_rssi_dBm,snr_db,gateway_id,packet_received,collision_flag,payload_bytes,channel
+14.197291,DEV0,1,13.692261,7,125000,1,6.429375,6.024946,1.500000,-114.774413,-114.518634,-999.000000,-999.000000,1,0,0,29,0
+16.343604,DEV1,1,8.455884,7,125000,1,8.827226,1.951201,1.500000,-107.542797,-105.086950,-999.000000,-999.000000,1,0,0,29,0
