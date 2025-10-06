@@ -1,0 +1,5 @@
+Algorithm,PDR (%),Energy (mJ/packet),Convergence Time (hours)
+Baseline (Static),43.33,0.19,-
+Q-Learning,45.9298,0.185,72
+DQN,48.5296,0.182,48
+DDQN-PER (Ours),50.782759999999996,0.18,24
