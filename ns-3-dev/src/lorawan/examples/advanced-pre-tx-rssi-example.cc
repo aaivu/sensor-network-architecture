@@ -32,6 +32,7 @@
 #include "ns3/lora-channel.h"
 #include "ns3/network-server-helper.h"
 #include "ns3/forwarder-helper.h"
+#include "ns3/point-to-point-module.h"
 
 #include <algorithm>
 #include <ctime>
@@ -51,6 +52,11 @@ std::map<uint32_t, bool> activeTransmitters; // nodeId -> isCurrentlyTransmittin
 std::map<uint32_t, double> nodeTxPowers;     // nodeId -> txPowerDbm
 std::map<uint32_t, Vector> nodePositions;    // nodeId -> position
 std::map<uint32_t, Time> transmissionEndTimes; // nodeId -> when current transmission ends
+
+// ADR parameter tracking (updated via trace sources)
+std::map<uint32_t, double> nodeCurrentTxPowers; // nodeId -> current ADR-adjusted TX power
+std::map<uint32_t, uint8_t> nodeCurrentDataRates; // nodeId -> current ADR-adjusted data rate
+std::map<uint32_t, uint32_t> nodeIdToDeviceIndex; // nodeId -> device index in endDevicesNetDevices
 
 /**
  * Enhanced environmental modeling structures (simplified version)
@@ -404,6 +410,37 @@ RssiSample SamplePreTxRssi(uint32_t txNodeId, Time currentTime) {
 }
 
 /**
+ * Callback triggered when ADR changes TX power for a device
+ */
+void OnTxPowerChange(std::string context, double oldValue, double newValue) {
+    // Extract node ID from context path
+    // Context format: "/NodeList/X/DeviceList/0/$ns3::LoraNetDevice/Mac/$ns3::EndDeviceLorawanMac/TxPower"
+    size_t nodeStart = context.find("/NodeList/") + 10;
+    size_t nodeEnd = context.find("/", nodeStart);
+    uint32_t nodeId = std::stoi(context.substr(nodeStart, nodeEnd - nodeStart));
+    
+    nodeCurrentTxPowers[nodeId] = newValue;
+    
+    NS_LOG_INFO("ADR TX POWER CHANGE - Node " << nodeId << ": " << oldValue << " -> " << newValue << " dBm");
+    std::cout << "ADR TX POWER CHANGE - Node " << nodeId << ": " << oldValue << " -> " << newValue << " dBm" << std::endl;
+}
+
+/**
+ * Callback triggered when ADR changes data rate for a device
+ */
+void OnDataRateChange(std::string context, uint8_t oldValue, uint8_t newValue) {
+    // Extract node ID from context path
+    size_t nodeStart = context.find("/NodeList/") + 10;
+    size_t nodeEnd = context.find("/", nodeStart);
+    uint32_t nodeId = std::stoi(context.substr(nodeStart, nodeEnd - nodeStart));
+    
+    nodeCurrentDataRates[nodeId] = newValue;
+    
+    NS_LOG_INFO("ADR DATA RATE CHANGE - Node " << nodeId << ": " << (int)oldValue << " -> " << (int)newValue);
+    std::cout << "ADR DATA RATE CHANGE - Node " << nodeId << ": " << (int)oldValue << " -> " << (int)newValue << std::endl;
+}
+
+/**
  * Callback triggered when a node starts transmitting
  */
 void OnTransmissionStart(Ptr<const Packet> packet, uint32_t systemId) {
@@ -420,21 +457,54 @@ void OnTransmissionStart(Ptr<const Packet> packet, uint32_t systemId) {
     
     // Extract actual parameters from device (ADR-adapted or default)
     uint8_t actualSF = 7;
-    double actualTxPower = nodeTxPowers[nodeId];
+    double actualTxPower = nodeTxPowers[nodeId]; // Default value
     uint32_t actualBW = 125000;
     uint8_t actualCR = 1;
     
-    if (enableAdr && nodeId < endDevicesNetDevices.size()) {
-        // Extract actual ADR parameters from the device
-        Ptr<EndDeviceLoraPhy> edPhy = DynamicCast<EndDeviceLoraPhy>(endDevicesNetDevices[nodeId]->GetPhy());
-        Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(endDevicesNetDevices[nodeId]->GetMac());
+    if (enableAdr && nodeIdToDeviceIndex.find(nodeId) != nodeIdToDeviceIndex.end()) {
+        uint32_t deviceIndex = nodeIdToDeviceIndex[nodeId];
         
-        if (edPhy && edMac) {
-            actualSF = edPhy->GetSpreadingFactor();
-            // actualTxPower = edPhy->GetTxPowerDbm(); // May not be available - use stored value
-            actualBW = 125000; // Standard LoRaWAN EU868 bandwidth
-            // actualCR = edMac->GetCodeRate(); // May not be available in all versions
+        // Use tracked ADR parameters (updated via trace sources)
+        std::cout << "DEBUG: Node " << nodeId << " (device " << deviceIndex << ") - Checking ADR traces at " << currentTime.GetSeconds() << "s" << std::endl;
+        std::cout << "  - nodeCurrentTxPowers.size(): " << nodeCurrentTxPowers.size() << std::endl;
+        std::cout << "  - nodeCurrentDataRates.size(): " << nodeCurrentDataRates.size() << std::endl;
+        
+        if (nodeCurrentTxPowers.find(nodeId) != nodeCurrentTxPowers.end()) {
+            actualTxPower = nodeCurrentTxPowers[nodeId]; // Override with ADR value
+            std::cout << "  - Using ADR TX Power: " << actualTxPower << " dBm for node " << nodeId << std::endl;
+            NS_LOG_DEBUG("Using ADR TX Power: " << actualTxPower << " dBm for node " << nodeId);
+        } else {
+            std::cout << "  - No ADR TX power available for node " << nodeId << ", using default: " << actualTxPower << " dBm" << std::endl;
         }
+        
+        if (nodeCurrentDataRates.find(nodeId) != nodeCurrentDataRates.end()) {
+            // Convert data rate to spreading factor (LoRaWAN EU868)
+            uint8_t dataRate = nodeCurrentDataRates[nodeId];
+            switch (dataRate) {
+                case 0: actualSF = 12; break;
+                case 1: actualSF = 11; break;
+                case 2: actualSF = 10; break;
+                case 3: actualSF = 9; break;
+                case 4: actualSF = 8; break;
+                case 5: actualSF = 7; break;
+                default: actualSF = 7; break; // Default to SF7
+            }
+            std::cout << "  - Using ADR SF: " << (int)actualSF << " (DR=" << (int)dataRate << ") for node " << nodeId << std::endl;
+            NS_LOG_DEBUG("Using ADR SF: " << (int)actualSF << " (DR=" << (int)dataRate << ") for node " << nodeId);
+        } else {
+            std::cout << "  - No ADR data rate available for node " << nodeId << ", using default SF: " << (int)actualSF << std::endl;
+        }
+        
+        actualBW = 125000; // Standard LoRaWAN EU868 bandwidth
+        
+        NS_LOG_DEBUG("ADR Parameters from traces - SF: " << static_cast<int>(actualSF) 
+                    << ", TX Power: " << actualTxPower << " dBm (from trace)"
+                    << ", BW: " << actualBW << " Hz, CR: " << static_cast<int>(actualCR));
+    } else {
+        // Non-ADR mode - use static values  
+        NS_LOG_DEBUG("Static Parameters - SF: " << static_cast<int>(actualSF) 
+                    << ", TX Power: " << actualTxPower << " dBm (static)"
+                    << ", BW: " << actualBW << " Hz, CR: " << static_cast<int>(actualCR));
     }
     
     // Calculate transmission duration with actual parameters
@@ -716,6 +786,11 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
     endDevicesNetDevices.clear();
     enableAdr = useAdr;
     
+    // Clear ADR tracking structures
+    nodeCurrentTxPowers.clear();
+    nodeCurrentDataRates.clear();
+    nodeIdToDeviceIndex.clear();
+    
     // Clear environmental structures
     nodeAntennaGains.clear();
     nodeNoiseFigures.clear();
@@ -830,19 +905,87 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
     // Store end device net devices for ADR parameter extraction
     for (uint32_t i = 0; i < endDevicesNetDevs.GetN(); ++i) {
         endDevicesNetDevices.push_back(DynamicCast<LoraNetDevice>(endDevicesNetDevs.Get(i)));
+        
+        // Map node ID to device index for ADR trace access
+        uint32_t nodeId = endDevices.Get(i)->GetId();
+        nodeIdToDeviceIndex[nodeId] = i;
+        
+        NS_LOG_DEBUG("Device " << i << " has Node ID " << nodeId);
+        std::cout << "Device " << i << " has Node ID " << nodeId << std::endl;
     }
     
     // Install on gateway
     phyHelper.SetDeviceType(LoraPhyHelper::GW);
     macHelper.SetDeviceType(LorawanMacHelper::GW);
     NetDeviceContainer gwNetDevices = helper.Install(phyHelper, macHelper, gateways);
+
+    // Set spreading factors up (automatically optimizes initial SF based on distance)
+    LorawanMacHelper::SetSpreadingFactorsUp(endDevices, gateways, globalChannel);
+
+    ////////////
+    // Create Network Server for ADR
+    ////////////
     
-    // **ADR NOTE: For now using device-level parameter extraction**
-    // TODO: Add full NetworkServer with ADR once API is confirmed
     if (enableAdr) {
-        std::cout << "ADR ENABLED: Will extract dynamic parameters from devices" << std::endl;
+        Ptr<Node> networkServer = CreateObject<Node>();
+
+        // PointToPoint links between gateways and server
+        PointToPointHelper p2p;
+        p2p.SetDeviceAttribute("DataRate", StringValue("5Mbps"));
+        p2p.SetChannelAttribute("Delay", StringValue("2ms"));
+        
+        // Store network server app registration details
+        P2PGwRegistration_t gwRegistration;
+        for (auto gw = gateways.Begin(); gw != gateways.End(); ++gw) {
+            auto container = p2p.Install(networkServer, *gw);
+            auto serverP2PNetDev = DynamicCast<PointToPointNetDevice>(container.Get(0));
+            gwRegistration.emplace_back(serverP2PNetDev, *gw);
+        }
+
+        // Install the NetworkServer application with ADR enabled
+        NetworkServerHelper networkServerHelper;
+        networkServerHelper.SetGatewaysP2P(gwRegistration);
+        networkServerHelper.SetEndDevices(endDevices);
+        networkServerHelper.EnableAdr(true);  // Enable ADR first!
+        networkServerHelper.SetAdr("ns3::AdrComponent");  // Set ADR algorithm
+        networkServerHelper.Install(networkServer);
+
+        // Install the Forwarder application on the gateways
+        ForwarderHelper forwarderHelper;
+        forwarderHelper.Install(gateways);
+        
+        std::cout << "ADR ENABLED: Network Server with AdrComponent active" << std::endl;
+        
+        // Explicitly enable ADR requests on end devices
+        for (auto device = endDevices.Begin(); device != endDevices.End(); device++) {
+            Ptr<LorawanMac> mac = DynamicCast<LoraNetDevice>((*device)->GetDevice(0))->GetMac();
+            Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(mac);
+            if (edMac) {
+                edMac->SetUplinkAdrBit(true);  // Ensure ADR bit is set in uplink frames
+                NS_LOG_INFO("ADR uplink bit enabled for device " << (*device)->GetId());
+                
+                // Initialize current parameter tracking with initial values
+                uint32_t nodeId = (*device)->GetId();
+                nodeCurrentTxPowers[nodeId] = edMac->GetTransmissionPowerDbm();
+                nodeCurrentDataRates[nodeId] = edMac->GetDataRate();
+                
+                NS_LOG_INFO("Initial ADR parameters for device " << nodeId 
+                           << " - TX Power: " << nodeCurrentTxPowers[nodeId] << " dBm"
+                           << ", Data Rate: " << (int)nodeCurrentDataRates[nodeId]);
+            }
+        }
+        
+        // Connect to ADR trace sources to track parameter changes
+        Config::Connect("/NodeList/*/DeviceList/*/$ns3::LoraNetDevice/Mac/$ns3::EndDeviceLorawanMac/TxPower",
+                       MakeCallback(&OnTxPowerChange));
+        
+        Config::Connect("/NodeList/*/DeviceList/*/$ns3::LoraNetDevice/Mac/$ns3::EndDeviceLorawanMac/DataRate",
+                       MakeCallback(&OnDataRateChange));
+        
+        NS_LOG_INFO("Connected to ADR trace sources for parameter tracking");
+        std::cout << "ADR trace sources connected for dynamic parameter capture" << std::endl;
     } else {
-        std::cout << "ADR DISABLED: Using default static parameters" << std::endl;
+        std::cout << "ADR DISABLED: Using static parameters" << std::endl;
     }
     
     // Set up periodic applications with randomized transmission intervals proportionate to appPeriod

@@ -87,10 +87,10 @@ struct Experience {
  */
 class SimpleQNetwork {
 private:
-    static const int INPUT_SIZE = 6;
+    static const int INPUT_SIZE = 3;
     static const int HIDDEN1_SIZE = 128;
     static const int HIDDEN2_SIZE = 64;
-    static const int OUTPUT_SIZE = 15;
+    static const int OUTPUT_SIZE = 12;
     
     std::vector<std::vector<double>> weights1, weights2, weights3;
     std::vector<double> bias1, bias2, bias3;
@@ -343,7 +343,7 @@ private:
     double epsilon, epsilonDecay, epsilonMin, gamma;
     int targetUpdateFreq, updateCounter;
     std::vector<int> sfActions = {7, 8, 9, 10, 11, 12};
-    std::vector<int> tpActions = {2, 8, 14}; 
+    std::vector<int> tpActions = {2, 5, 8, 11, 14, 17};
     double pdrWeight, energyWeight;
     std::mt19937 rng;
     double getRequiredSNR(int sf) {
@@ -365,7 +365,6 @@ private:
     }
     
 public:
-
     DDQNPERADRAgent(double lr = 0.001, double eps = 1.0, double epsDecay = 0.995, 
                    double epsMin = 0.01, double gam = 0.95, int targetFreq = 100,
                    double pdrW = 1.0, double energyW = 0.5)
@@ -376,10 +375,7 @@ public:
         
         targetNetwork.copyFrom(mainNetwork);
     }
-    void increaseExploration() {
-        epsilon = std::min(0.8, epsilon + 0.3);  // Boost exploration when stuck
-        std::cout << "🔄 Epsilon boosted to " << epsilon << " for better exploration" << std::endl;
-    }
+    
     int selectAction(const std::vector<double>& state) {
         std::uniform_real_distribution<double> dis(0.0, 1.0);
         
@@ -448,18 +444,10 @@ public:
     }
     
     std::pair<int, int> getParameters(int action) {
-        // Action space: 0-5 = SF changes, 6-11 = SF+TP combinations, 12-14 = TP only
         if (action < 6) {
-            // Pure SF actions (75% of action space)
-            return {sfActions[action], -1};  // Change SF, keep current TP
-        } else if (action < 12) {
-            // SF + TP combinations (25% of action space)
-            int sfIdx = (action - 6) / 2;  // 0,0,1,1,2,2
-            int tpIdx = (action - 6) % 2;  // 0,1,0,1,0,1
-            return {sfActions[sfIdx + 3], tpActions[tpIdx]};  // SF 10-12 with low/high TP
+            return {sfActions[action], -1};
         } else {
-            // Pure TP actions (minimal, for edge cases)
-            return {-1, tpActions[action - 12]};
+            return {-1, tpActions[action - 6]};
         }
     }
     
@@ -475,102 +463,73 @@ public:
         
         return reward;
     }
-   double calculateAdvancedReward(uint32_t nodeId, double pdr, double energyConsumption, 
-                              double snr, bool packetSuccess, int currentSF, double currentTP,
-                              double distance, uint32_t packetsSent) {
-    double reward = 0.0;
-    
-    // **1. PACKET SUCCESS/FAILURE (Primary feedback)**
-    if (packetSuccess) {
-        reward += 50.0;
-    } else {
-        reward -= 50.0;  // Strong penalty for failure
-    }
-    
-    // **2. SF APPROPRIATENESS (Most Important) - LoRaWAN Physics**
-    double requiredSnr = getRequiredSNR(currentSF);
-    double snrMargin = snr - requiredSnr;
-    
-    // Poor conditions - MUST use higher SF
-    if (snrMargin < -10.0) {  // Very poor signal
-        if (currentSF < 12) {
-            reward -= 200.0;  // MASSIVE penalty for not using SF12
-            std::cout << "🔴 CRITICAL: SNR=" << snr << "dB requires SF12, using SF=" << currentSF << std::endl;
-        } else {
-            reward += 100.0;  // Big bonus for using SF12 correctly
-        }
-    } else if (snrMargin < -5.0) {  // Poor signal
-        if (currentSF < 10) {
-            reward -= 150.0;  // Very large penalty
-        } else {
-            reward += 75.0;   // Good bonus for appropriate SF
-        }
-    } else if (snrMargin < 0.0) {  // Marginal signal
-        if (currentSF < 8) {
-            reward -= 100.0;  // Large penalty for low SF
-        } else {
-            reward += 50.0;   // Bonus for adequate SF
-        }
-    } else if (snrMargin > 15.0) {  // Excellent signal
-        if (currentSF > 7) {
-            reward -= 30.0;   // Penalty for over-engineering (minor)
-        } else {
-            reward += 25.0;   // Bonus for efficiency
-        }
-    }
-    
-    // **3. PDR-BASED SF GUIDANCE**
-    if (packetsSent >= 20) {
-        if (pdr < 0.1) {  // Very poor PDR - emergency
-            if (currentSF < 12) {
-                reward -= 300.0;  // Extreme penalty
-                std::cout << "⚠️ EMERGENCY: PDR=" << pdr*100 << "% - MUST USE SF12!" << std::endl;
-            }
-        } else if (pdr < 0.3) {  // Poor PDR
-            if (currentSF < 10) {
-                reward -= 200.0;  // Very large penalty
-            }
-        } else if (pdr < 0.6) {  // Below target PDR
-            if (currentSF < 8) {
-                reward -= 100.0;  // Large penalty
-            }
-        }
-    }
-    
-    // **4. ENERGY EFFICIENCY (Secondary) - Penalize excessive TX power**
-    if (currentTP > 14.0 && snrMargin > 5.0) {
-        reward -= 50.0;  // Big penalty for using high power when not needed
-    } else if (currentTP > 11.0 && snrMargin > 10.0) {
-        reward -= 25.0;  // Penalty for moderate over-power
-    }
-    
-    // **5. PROGRESSIVE SF LEARNING BONUS**
-    static std::map<uint32_t, int> lastSF;
-    if (lastSF.find(nodeId) != lastSF.end()) {
-        int previousSF = lastSF[nodeId];
+    double calculateAdvancedReward(uint32_t nodeId, double pdr, double energyConsumption, 
+                                  double snr, bool packetSuccess, int currentSF, double currentTP,
+                                  double distance, uint32_t packetsSent) {
+        double reward = 0.0;
         
-        // Reward increasing SF when conditions are poor
-        if (!packetSuccess && currentSF > previousSF) {
-            reward += 75.0;  // Big bonus for learning to increase SF
-            std::cout << "✅ LEARNING: Increased SF " << previousSF << "→" << currentSF << " after failure" << std::endl;
+        // **1. Primary PDR Reward (most important)**
+        if (packetSuccess) {
+            reward += 10.0;  // Strong positive reward for success
+        } else {
+            reward -= 5.0;   // Penalty for failure
         }
         
-        // Penalty for decreasing SF when still having failures
-        if (pdr < 0.5 && currentSF < previousSF) {
-            reward -= 100.0;  // Big penalty for wrong direction
+        // **2. PDR Target Achievement Reward**
+        double targetPDR = 0.85;  // Target 85% PDR
+        if (packetsSent >= 5) {
+            if (pdr > targetPDR) {
+                reward += 5.0 * (pdr - targetPDR);  // Bonus for exceeding target
+            } else {
+                reward -= 10.0 * (targetPDR - pdr);  // Penalty for missing target
+            }
         }
-    }
-    lastSF[nodeId] = currentSF;
-    
-    // **6. EXTREME ENERGY PENALTY**
-    if (energyConsumption > 0.5) {  // Very high energy (SF12 + high TP)
-        if (pdr < 0.7) {  // Still poor PDR despite high energy
-            reward -= 75.0;  // Penalty for inefficient high energy use
+        
+        // **3. Energy Efficiency Reward**
+        double energyEfficiency = 1.0 / (energyConsumption + 0.01);
+        reward += 0.5 * energyEfficiency;
+        
+        // **4. SNR-based Link Quality Reward**
+        double requiredSnr = getRequiredSNR(currentSF);
+        double snrMargin = snr - requiredSnr;
+        
+        if (snrMargin > 5.0) {
+            reward += 2.0;  // Good link margin - could reduce power/SF
+        } else if (snrMargin < 0.0) {
+            reward -= 3.0;  // Poor link margin - need higher power/SF
         }
+        
+        // **5. Parameter Efficiency Reward**
+        int optimalSF = getOptimalSFForDistance(distance);
+        int sfDifference = abs(currentSF - optimalSF);
+        
+        if (sfDifference <= 1) {
+            reward += 2.0;  // Close to optimal SF
+        } else {
+            reward -= 1.0 * sfDifference;  // Penalty for suboptimal SF
+        }
+        
+        // **6. Power Efficiency Reward**
+        if (currentTP > 14.0 && snrMargin > 3.0) {
+            reward -= 2.0;  // Penalty for using high power when not needed
+        } else if (currentTP < 5.0 && snrMargin < -2.0) {
+            reward -= 2.0;  // Penalty for using low power when more is needed
+        }
+        
+        // **7. Exploration Bonus (early in training)**
+        if (epsilon > 0.5) {  // Early exploration phase
+            reward += 0.5;  // Small bonus for trying different actions
+        }
+        
+        // **8. Consistency Reward**
+        if (packetsSent >= 10) {
+            if (pdr > 0.7) {  // Stable performance
+                reward += 1.0;
+            }
+        }
+        
+        return reward;
     }
-    
-    return reward;
-}
     
     double getEpsilon() const { return epsilon; }
 };
@@ -629,11 +588,6 @@ ADRMethod currentADRMethod = ADRMethod::OFF;
 // Global references for ADR functionality
 std::vector<Ptr<LoraNetDevice>> endDevicesNetDevices;
 std::map<uint32_t, std::unique_ptr<DDQNPERADRAgent>> ddqnAgents;
-
-// ADR parameter tracking (updated via trace sources) - SAME AS WORKING VERSION
-std::map<uint32_t, double> nodeCurrentTxPowers; // nodeId -> current ADR-adjusted TX power
-std::map<uint32_t, uint8_t> nodeCurrentDataRates; // nodeId -> current ADR-adjusted data rate
-std::map<uint32_t, uint32_t> nodeIdToDeviceIndex; // nodeId -> device index in endDevicesNetDevices
 
 // Device performance tracking for DDQN
 struct DeviceMetrics {
@@ -904,38 +858,6 @@ RssiSample SamplePreTxRssi(uint32_t txNodeId, Time currentTime) {
 }
 
 /**
- * Callback triggered when ADR changes TX power for a device - SAME AS WORKING VERSION
- */
-void OnTxPowerChange(std::string context, double oldValue, double newValue) {
-    // Extract node ID from context path
-    // Context format: "/NodeList/X/DeviceList/0/$ns3::LoraNetDevice/Mac/$ns3::EndDeviceLorawanMac/TxPower"
-    size_t nodeStart = context.find("/NodeList/") + 10;
-    size_t nodeEnd = context.find("/", nodeStart);
-    uint32_t nodeId = std::stoi(context.substr(nodeStart, nodeEnd - nodeStart));
-    
-    nodeCurrentTxPowers[nodeId] = newValue;
-    
-    NS_LOG_INFO("ADR TX POWER CHANGE - Node " << nodeId << ": " << oldValue << " -> " << newValue << " dBm");
-    std::cout << "ADR TX POWER CHANGE - Node " << nodeId << ": " << oldValue << " -> " << newValue << " dBm" << std::endl;
-    std::cout << "🔍 STORED in nodeCurrentTxPowers[" << nodeId << "] = " << newValue << " dBm" << std::endl;
-}
-
-/**
- * Callback triggered when ADR changes data rate for a device - SAME AS WORKING VERSION
- */
-void OnDataRateChange(std::string context, uint8_t oldValue, uint8_t newValue) {
-    // Extract node ID from context path
-    size_t nodeStart = context.find("/NodeList/") + 10;
-    size_t nodeEnd = context.find("/", nodeStart);
-    uint32_t nodeId = std::stoi(context.substr(nodeStart, nodeEnd - nodeStart));
-    
-    nodeCurrentDataRates[nodeId] = newValue;
-    
-    NS_LOG_INFO("ADR DATA RATE CHANGE - Node " << nodeId << ": " << (int)oldValue << " -> " << (int)newValue);
-    std::cout << "ADR DATA RATE CHANGE - Node " << nodeId << ": " << (int)oldValue << " -> " << (int)newValue << std::endl;
-}
-
-/**
  * Calculate energy consumption for a packet
  */
 double CalculateEnergyConsumption(int sf, double txPowerDbm, uint32_t payloadBytes) {
@@ -1037,53 +959,27 @@ void RecordTransmissionParameters(Ptr<const Packet> packet, uint32_t nodeId, Tim
     double actualTxPower;
     
     if (currentADRMethod == ADRMethod::ON) {
-        // **FOR CLASSICAL ADR: Use trace source values (WORKING APPROACH)**
-        // Start with default values, then override with ADR if available
-        actualSF = 7;
-        actualTxPower = 14.0; // Standard LoRaWAN default
-        
-        if (nodeIdToDeviceIndex.find(nodeId) != nodeIdToDeviceIndex.end()) {
-            uint32_t deviceIndex = nodeIdToDeviceIndex[nodeId];
+        // **FOR CLASSICAL ADR: Read actual values from MAC/PHY (set by AdrComponent)**
+        if (nodeId < endDevicesNetDevices.size()) {
+            Ptr<EndDeviceLoraPhy> edPhy = DynamicCast<EndDeviceLoraPhy>(
+                endDevicesNetDevices[nodeId]->GetPhy());
+            Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
+                endDevicesNetDevices[nodeId]->GetMac());
             
-            std::cout << "DEBUG: Node " << nodeId << " (device " << deviceIndex 
-                     << ") - Checking ADR traces at " << transmissionTime.GetSeconds() << "s" << std::endl;
-            
-            // Use tracked ADR parameters (updated via trace sources)
-            if (nodeCurrentTxPowers.find(nodeId) != nodeCurrentTxPowers.end()) {
-                actualTxPower = nodeCurrentTxPowers[nodeId]; // Override with ADR value
-                std::cout << "  - Using ADR TX Power: " << actualTxPower << " dBm for node " << nodeId << std::endl;
+            if (edPhy && edMac) {
+                actualSF = edPhy->GetSpreadingFactor();
+                actualTxPower = edMac->GetTransmissionPowerDbm();
+                
+                // Update global tracking to match actual values
+                currentSF[nodeId] = actualSF;
+                currentTP[nodeId] = actualTxPower;
             } else {
-                actualTxPower = nodeTxPowers[nodeId]; // Fallback to device-specific default
-                std::cout << "  - No ADR TX power available for node " << nodeId << ", using default: " << actualTxPower << " dBm" << std::endl;
-                std::cout << "  🔍 nodeCurrentTxPowers map contents: ";
-                for (auto& pair : nodeCurrentTxPowers) {
-                    std::cout << "[" << pair.first << ":" << pair.second << "] ";
-                }
-                std::cout << std::endl;
+                actualSF = 7;  // Fallback
+                actualTxPower = nodeTxPowers[nodeId];
             }
-            
-            if (nodeCurrentDataRates.find(nodeId) != nodeCurrentDataRates.end()) {
-                // Convert data rate to spreading factor (LoRaWAN EU868)
-                uint8_t dataRate = nodeCurrentDataRates[nodeId];
-                switch (dataRate) {
-                    case 0: actualSF = 12; break;
-                    case 1: actualSF = 11; break;
-                    case 2: actualSF = 10; break;
-                    case 3: actualSF = 9; break;
-                    case 4: actualSF = 8; break;
-                    case 5: actualSF = 7; break;
-                    default: actualSF = 7; break; // Default to SF7
-                }
-                std::cout << "  - Using ADR SF: " << (int)actualSF << " (DR=" << (int)dataRate << ") for node " << nodeId << std::endl;
-            } else {
-                std::cout << "  - No ADR data rate available for node " << nodeId << ", using default SF: " << (int)actualSF << std::endl;
-            }
-            
-            // Update global tracking to match trace values
-            currentSF[nodeId] = actualSF;
-            currentTP[nodeId] = actualTxPower;
         } else {
-            std::cout << "  - Node " << nodeId << " not found in device mapping, using defaults" << std::endl;
+            actualSF = 7;  // Fallback
+            actualTxPower = nodeTxPowers[nodeId];
         }
     } else {
         // **FOR DDQN ADR: Use authoritative global values**
@@ -1256,14 +1152,10 @@ void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess) {
     
     // **IMPROVED STATE NORMALIZATION**
     std::vector<double> currentState = {
-        std::max(0.0, std::min(1.0, (snr + 25.0) / 50.0)),      // Normalized SNR
-        (currentSFVal - 7.0) / 5.0,                             // Normalized SF (most important)
-        std::min(1.0, std::max(0.0, currentPDR)),               // PDR (0-1, clamped)
-        (currentTPVal - 2.0) / 15.0,                            // Normalized TP (least important)
-        std::min(1.0, avgEnergyPerPacket / 1.0),                // Energy feedback
-        std::min(1.0, distance / 4000.0)                       // Distance context
+        std::max(0.0, std::min(1.0, (snr + 20.0) / 40.0)),
+        (currentSFVal - 7.0) / 5.0,
+        (currentTPVal - 2.0) / 15.0
     };
-    
     
     // **ADVANCED REWARD CALCULATION**
     double reward = 0.0;
@@ -1322,16 +1214,7 @@ void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess) {
             }
         });
     }
-    if (metrics.packetsSent >= 10 && currentPDR < 0.3) {
-        std::cout << "🚨 POOR PERFORMANCE DETECTED - Node " << nodeId 
-                  << ": PDR=" << currentPDR*100 << "%, SNR=" << snr << "dB, SF=" << (int)currentSFVal << std::endl;
-        
-        // Force exploration of higher SF if stuck in low SF with poor performance
-        if (currentSFVal < 9 && ddqnAgents[nodeId]->getEpsilon() < 0.3) {
-            ddqnAgents[nodeId]->increaseExploration();  // Need to add this method
-            std::cout << "🔄 FORCED EXPLORATION: Increasing epsilon for SF exploration" << std::endl;
-        }
-    }
+    
     if (newTP != -1) {
         currentTP[nodeId] = newTP;
         nodeTxPowers[nodeId] = newTP;
@@ -1583,11 +1466,6 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
     urbanObstacles.clear();
     wifiInterferers = NodeContainer();
     
-    // **Clear ADR tracking structures**
-    nodeCurrentTxPowers.clear();
-    nodeCurrentDataRates.clear();
-    nodeIdToDeviceIndex.clear();
-    
     currentADRMethod = adrMethod;
     
     // Set fixed seed for reproducible results across all ADR methods
@@ -1673,10 +1551,6 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
         uint32_t nodeId = endDevices.Get(i)->GetId();
         currentSF[nodeId] = 7;  // Default SF
         currentTP[nodeId] = nodeTxPowers[nodeId];  // Use initial power
-        
-        // **CRITICAL: Map node ID to device index for ADR parameter extraction**
-        nodeIdToDeviceIndex[nodeId] = i;
-        std::cout << "📋 Mapped Node ID " << nodeId << " → Device Index " << i << std::endl;
     }
     
     phyHelper.SetDeviceType(LoraPhyHelper::GW);
@@ -1710,32 +1584,6 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
         networkServerHelper.SetEndDevices(endDevices);
         networkServerHelper.Install(networkServer.Get(0));
         
-        // **CRITICAL: Enable ADR uplink bit on all end devices**
-        for (uint32_t i = 0; i < endDevicesNetDevs.GetN(); ++i) {
-            Ptr<LoraNetDevice> loraNetDevice = endDevicesNetDevs.Get(i)->GetObject<LoraNetDevice>();
-            Ptr<EndDeviceLorawanMac> endDeviceMac = DynamicCast<EndDeviceLorawanMac>(loraNetDevice->GetMac());
-            if (endDeviceMac) {
-                endDeviceMac->SetUplinkAdrBit(true);
-                uint32_t nodeId = endDevices.Get(i)->GetId();
-                std::cout << "ADR uplink bit enabled for device " << nodeId << std::endl;
-                
-                // Get initial ADR parameters
-                double initialTxPower = endDeviceMac->GetTransmissionPowerDbm();
-                uint8_t initialDataRate = endDeviceMac->GetDataRate();
-                std::cout << "Initial ADR parameters for device " << nodeId 
-                          << " - TX Power: " << initialTxPower << " dBm, Data Rate: " 
-                          << (int)initialDataRate << std::endl;
-            }
-        }
-        
-        // **ESSENTIAL: Connect trace sources to capture ADR parameter changes**
-        Config::Connect("/NodeList/*/DeviceList/*/$ns3::LoraNetDevice/Mac/$ns3::EndDeviceLorawanMac/TxPower",
-                       MakeCallback(&OnTxPowerChange));
-        Config::Connect("/NodeList/*/DeviceList/*/$ns3::LoraNetDevice/Mac/$ns3::EndDeviceLorawanMac/DataRate",
-                       MakeCallback(&OnDataRateChange));
-        
-        std::cout << "✅ ADR trace sources connected for parameter tracking" << std::endl;
-        
         // Install the Forwarder application on the gateways
         ForwarderHelper forwarderHelper;
         ApplicationContainer forwarders = forwarderHelper.Install(gateways);
@@ -1762,14 +1610,14 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
         for (uint32_t i = 0; i < nDevices; ++i) {
             uint32_t nodeId = endDevices.Get(i)->GetId();
                     ddqnAgents[nodeId] = std::make_unique<DDQNPERADRAgent>(
-             0.005,   // Lower learning rate for more stable learning
-            0.95,    // Very high initial exploration
-            0.9995,  // Much slower epsilon decay
-            0.2,     // Higher minimum exploration
-            0.95,    // Discount factor
-            100,     // Less frequent target updates
-            1.0,     // PDR weight (will be handled in new reward function)
-            0.1     // Energy weight
+            0.01,   // Higher learning rate
+            0.9,    // Higher initial exploration
+            0.99,   // Slower epsilon decay
+            0.05,   // Higher minimum exploration
+            0.95,   // Discount factor
+            50,     // More frequent target updates
+            10.0,   // Much higher PDR weight
+            1.0     // Energy weight
         );
         }
     }
