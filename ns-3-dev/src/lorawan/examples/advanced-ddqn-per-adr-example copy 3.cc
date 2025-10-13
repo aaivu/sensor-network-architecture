@@ -661,7 +661,6 @@ void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess);
 // Forward declarations
 void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess);
 void WriteCSVOutput(const std::string& filename);
-void WriteEnvironmentVisualization(const std::string& baseFilename, double radius, uint32_t nDevices);
 
 /**
  * Set up simplified urban environment with virtual obstacles
@@ -1435,54 +1434,6 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
                   double radius, const std::string& csvFileName, ADRMethod adrMethod, uint32_t nWifiInterferers);
 
 /**
- * Write environment visualization CSV for plotting
- */
-void WriteEnvironmentVisualization(const std::string& baseFilename, double radius, uint32_t nDevices) {
-    std::string envFilename = "lorawan_datasets/" + baseFilename + "_environment.csv";
-    std::ofstream envFile(envFilename);
-    
-    // Header
-    envFile << "type,x,y,z,width,height,attenuation,id,label\n";
-    
-    // Write gateway
-    envFile << "gateway,0,0,15,0,0,0,GW,Gateway\n";
-    
-    // Write end devices (iterate through actual node positions)
-    for (const auto& nodePair : nodePositions) {
-        uint32_t nodeId = nodePair.first;
-        Vector pos = nodePair.second;
-        
-        // Skip gateway node (ID 0 at position (0,0,15))
-        if (pos.x == 0 && pos.y == 0 && pos.z == 15) continue;
-        
-        double txPower = (nodeTxPowers.find(nodeId) != nodeTxPowers.end()) ? nodeTxPowers[nodeId] : 14.0;
-        envFile << "end_device," << pos.x << "," << pos.y << "," << pos.z 
-                << ",0,0," << txPower << "," << nodeId << ",Device_" << nodeId << "\n";
-    }
-    
-    // Write urban obstacles
-    for (size_t i = 0; i < urbanObstacles.size(); i++) {
-        const UrbanObstacle& obstacle = urbanObstacles[i];
-        envFile << "obstacle," << obstacle.position.x << "," << obstacle.position.y << ",0"
-                << "," << obstacle.width << "," << obstacle.height << "," << obstacle.attenuationDb
-                << ",OBS_" << i << ",Building_" << i << "\n";
-    }
-    
-    // Write WiFi interferers
-    for (uint32_t i = 0; i < wifiInterferers.GetN(); i++) {
-        Ptr<MobilityModel> mobility = wifiInterferers.Get(i)->GetObject<MobilityModel>();
-        if (mobility) {
-            Vector pos = mobility->GetPosition();
-            envFile << "wifi_interferer," << pos.x << "," << pos.y << "," << pos.z
-                    << ",0,0,0,WIFI_" << i << ",WiFi_" << i << "\n";
-        }
-    }
-    
-    envFile.close();
-    std::cout << "Environment visualization data saved to: " << envFilename << std::endl;
-}
-
-/**
  * Write comprehensive CSV output
  */
 void WriteCSVOutput(const std::string& filename) {
@@ -1548,9 +1499,6 @@ void WriteCSVOutput(const std::string& filename) {
         }
     }
     double successRate = (totalPackets > 0) ? (double)receivedPackets / totalPackets * 100.0 : 0.0;
-    
-    // Generate environment visualization CSV
-    WriteEnvironmentVisualization(baseFilename, 1000.0, devicePackets.size());
     
     std::cout << "\n=== REALISTIC ns-3 LoRaWAN SIMULATION RESULTS ===" << std::endl;
     std::cout << "Total packets transmitted: " << totalPackets << std::endl;
