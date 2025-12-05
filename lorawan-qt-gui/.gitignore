@@ -1,0 +1,64 @@
+# Qt GUI Build Artifacts
+
+# Build directory
+build/
+build-*/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+
+# Qt
+*.pro.user
+*.pro.user.*
+*.qbs.user
+*.qbs.user.*
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+*.moc
+
+# C++ Build Artifacts
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Qt Creator
+*.autosave
+*.user
+
+# Compiled executables
+lorawan-gui
+lorawan-gui.app/
+
+# Output files
+*.csv
+*.log
+*.txt
+!CMakeLists.txt
+!README.md
+!QUICKSTART.md
+
+# Temporary files
+tmp/
+temp/
+*.tmp
