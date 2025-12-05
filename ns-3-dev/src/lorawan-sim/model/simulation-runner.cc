@@ -1,4 +1,5 @@
 #include "simulation-runner.h"
+#include "csv-reader.h"
 #include "ns3/log.h"
 #include "ns3/simulator.h"
 #include "ns3/config.h"
@@ -45,6 +46,14 @@ SimulationRunner::~SimulationRunner() {
     s_instance = nullptr;
 }
 
+void SimulationRunner::SetNodePositionsFile(const std::string& filePath) {
+    m_nodePositionsFile = filePath;
+}
+
+void SimulationRunner::SetObstaclesFile(const std::string& filePath) {
+    m_obstaclesFile = filePath;
+}
+
 void SimulationRunner::Clear() {
     m_environment.Clear();
     m_recorder.Clear();
@@ -64,7 +73,21 @@ void SimulationRunner::SetupNodes() {
     
     // Setup environment
     if (m_environment.IsEnvironmentalModelingEnabled()) {
-        m_environment.SetupUrbanEnvironment(m_radius);
+        // Load obstacles from CSV if provided
+        if (!m_obstaclesFile.empty() && TopologyLoader::FileExists(m_obstaclesFile)) {
+            NS_LOG_INFO("Loading obstacles from CSV: " << m_obstaclesFile);
+            std::vector<ObstacleData> obstacles = TopologyLoader::LoadObstacles(m_obstaclesFile);
+            
+            m_environment.ClearObstacles();
+            for (const auto& obs : obstacles) {
+                m_environment.AddObstacle(Vector(obs.x, obs.y, 0), obs.width, obs.height, obs.attenuationDb);
+            }
+            NS_LOG_INFO("Loaded " << obstacles.size() << " obstacles from CSV");
+        } else {
+            // Default: generate random obstacles
+            m_environment.SetupUrbanEnvironment(m_radius);
+        }
+        
         m_environment.SetupWiFiInterferers(m_radius, m_nWifiInterferers);
         m_environment.InitializeHardwareVariability(m_nDevices);
     }
@@ -79,32 +102,79 @@ void SimulationRunner::SetupNodes() {
     MobilityHelper mobility;
     Ptr<ListPositionAllocator> allocator = CreateObject<ListPositionAllocator>();
     
-    // Gateway position
+    // Gateway position (always at origin)
     allocator->Add(Vector(0, 0, 15));
     m_environment.SetNodePosition(m_gateways.Get(0)->GetId(), Vector(0, 0, 15));
     
-    // End device positions
-    Ptr<UniformRandomVariable> xRand = CreateObject<UniformRandomVariable>();
-    xRand->SetAttribute("Min", DoubleValue(-m_radius));
-    xRand->SetAttribute("Max", DoubleValue(m_radius));
-    xRand->SetStream(4001);
-    
-    Ptr<UniformRandomVariable> yRand = CreateObject<UniformRandomVariable>();
-    yRand->SetAttribute("Min", DoubleValue(-m_radius));
-    yRand->SetAttribute("Max", DoubleValue(m_radius));
-    yRand->SetStream(4002);
-    
-    Ptr<UniformRandomVariable> powerRand = CreateObject<UniformRandomVariable>();
-    powerRand->SetAttribute("Min", DoubleValue(8.0));
-    powerRand->SetAttribute("Max", DoubleValue(16.0));
-    powerRand->SetStream(4003);
-    
-    for (uint32_t i = 0; i < m_nDevices; i++) {
-        uint32_t nodeId = m_endDevices.Get(i)->GetId();
-        Vector pos(xRand->GetValue(), yRand->GetValue(), 1.5);
-        allocator->Add(pos);
-        m_environment.SetNodePosition(nodeId, pos);
-        m_environment.SetNodeTxPower(nodeId, powerRand->GetValue());
+    // End device positions - load from CSV or generate randomly
+    if (!m_nodePositionsFile.empty() && TopologyLoader::FileExists(m_nodePositionsFile)) {
+        NS_LOG_INFO("Loading node positions from CSV: " << m_nodePositionsFile);
+        std::vector<NodePositionData> positions = TopologyLoader::LoadNodePositions(m_nodePositionsFile);
+        
+        // Create a map for quick lookup
+        std::map<uint32_t, NodePositionData> positionMap;
+        for (const auto& pos : positions) {
+            positionMap[pos.nodeId] = pos;
+        }
+        
+        // Apply positions to nodes
+        Ptr<UniformRandomVariable> powerRand = CreateObject<UniformRandomVariable>();
+        powerRand->SetAttribute("Min", DoubleValue(8.0));
+        powerRand->SetAttribute("Max", DoubleValue(16.0));
+        powerRand->SetStream(4003);
+        
+        for (uint32_t i = 0; i < m_nDevices; i++) {
+            uint32_t nodeId = m_endDevices.Get(i)->GetId();
+            Vector pos;
+            
+            // Use CSV position if available, otherwise random
+            if (positionMap.find(i) != positionMap.end()) {
+                const auto& csvPos = positionMap[i];
+                pos = Vector(csvPos.x, csvPos.y, csvPos.z);
+                NS_LOG_DEBUG("Node " << i << " using CSV position: " << csvPos.x << ", " << csvPos.y);
+            } else {
+                // Fallback to random if not in CSV
+                Ptr<UniformRandomVariable> xRand = CreateObject<UniformRandomVariable>();
+                xRand->SetAttribute("Min", DoubleValue(-m_radius));
+                xRand->SetAttribute("Max", DoubleValue(m_radius));
+                Ptr<UniformRandomVariable> yRand = CreateObject<UniformRandomVariable>();
+                yRand->SetAttribute("Min", DoubleValue(-m_radius));
+                yRand->SetAttribute("Max", DoubleValue(m_radius));
+                pos = Vector(xRand->GetValue(), yRand->GetValue(), 1.5);
+                NS_LOG_WARN("Node " << i << " not found in CSV, using random position");
+            }
+            
+            allocator->Add(pos);
+            m_environment.SetNodePosition(nodeId, pos);
+            m_environment.SetNodeTxPower(nodeId, powerRand->GetValue());
+        }
+        
+        NS_LOG_INFO("Loaded positions for " << positions.size() << " nodes from CSV");
+    } else {
+        // Default: random positions
+        NS_LOG_INFO("Generating random node positions");
+        Ptr<UniformRandomVariable> xRand = CreateObject<UniformRandomVariable>();
+        xRand->SetAttribute("Min", DoubleValue(-m_radius));
+        xRand->SetAttribute("Max", DoubleValue(m_radius));
+        xRand->SetStream(4001);
+        
+        Ptr<UniformRandomVariable> yRand = CreateObject<UniformRandomVariable>();
+        yRand->SetAttribute("Min", DoubleValue(-m_radius));
+        yRand->SetAttribute("Max", DoubleValue(m_radius));
+        yRand->SetStream(4002);
+        
+        Ptr<UniformRandomVariable> powerRand = CreateObject<UniformRandomVariable>();
+        powerRand->SetAttribute("Min", DoubleValue(8.0));
+        powerRand->SetAttribute("Max", DoubleValue(16.0));
+        powerRand->SetStream(4003);
+        
+        for (uint32_t i = 0; i < m_nDevices; i++) {
+            uint32_t nodeId = m_endDevices.Get(i)->GetId();
+            Vector pos(xRand->GetValue(), yRand->GetValue(), 1.5);
+            allocator->Add(pos);
+            m_environment.SetNodePosition(nodeId, pos);
+            m_environment.SetNodeTxPower(nodeId, powerRand->GetValue());
+        }
     }
     
     mobility.SetPositionAllocator(allocator);

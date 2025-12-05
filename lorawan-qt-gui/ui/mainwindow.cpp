@@ -52,6 +52,14 @@ MainWindow::MainWindow(QWidget* parent)
     
     logMessage("=== LoRaWAN Simulator Started ===", "INFO");
     logMessage(QString("Output directory: %1").arg(m_outputDirectory), "INFO");
+    
+    // Log NS-3 integration status
+#ifdef ENABLE_NS3
+    logMessage("NS-3 Integration: ENABLED (compiled mode)", "SUCCESS");
+#else
+    logMessage("NS-3 Integration: DISABLED (command-line fallback mode)", "WARNING");
+#endif
+    
     updateStatusBar("Ready");
 }
 
@@ -577,17 +585,27 @@ void MainWindow::runSimulationThread() {
     // Just use the filename for csvFile parameter - ns-3 will create it in its directory
     QString csvFilename = QFileInfo(outputCsvFile).fileName();
     
+    // Paths to the CSV configuration files created by the GUI
+    QString nodePositionsPath = m_outputDirectory + "/config/node_positions.csv";
+    QString obstaclesPath = m_outputDirectory + "/config/obstacles.csv";
+    
+    // Get actual number of devices from the scene (excluding gateway)
+    int actualNumDevices = m_mapScene->getNodePositions().size() - 1;  // -1 for gateway
+    
     QString command = QString("./ns3 run \"lorawan-sim-example "
                              "--nDevices=%1 --radius=%2 --simulationTime=%3 "
                              "--appPeriod=%4 --adr=%5 --csvFile=%6 "
-                             "--environmental=true --wifiInterferers=%7\"")
-                        .arg(m_numDevicesSpin->value())
+                             "--environmental=true --wifiInterferers=%7 "
+                             "--nodePositions=%8 --obstacles=%9\"")
+                        .arg(actualNumDevices)
                         .arg(m_radiusSpin->value())
                         .arg(m_simTimeSpin->value())
                         .arg(m_appPeriodSpin->value())
                         .arg(adrMode)
                         .arg(csvFilename)
-                        .arg(m_wifiInterferersSpin->value());
+                        .arg(m_wifiInterferersSpin->value())
+                        .arg(nodePositionsPath)
+                        .arg(obstaclesPath);
     
     QMetaObject::invokeMethod(this, [this, ns3Dir, command]() {
         logMessage("Working directory: " + ns3Dir, "INFO");

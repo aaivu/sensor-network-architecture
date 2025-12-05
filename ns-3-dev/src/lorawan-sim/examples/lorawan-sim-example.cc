@@ -23,6 +23,8 @@ int main(int argc, char* argv[]) {
     std::string adrModeStr = "off";
     bool environmentalModeling = true;
     uint32_t nWifiInterferers = 12;
+    std::string nodePositionsFile = "";
+    std::string obstaclesFile = "";
     
     CommandLine cmd;
     cmd.AddValue("nDevices", "Number of end devices", nDevices);
@@ -33,6 +35,8 @@ int main(int argc, char* argv[]) {
     cmd.AddValue("adr", "ADR mode: 'off', 'on', 'ddqn', or 'all'", adrModeStr);
     cmd.AddValue("environmental", "Enable environmental effects modeling", environmentalModeling);
     cmd.AddValue("wifiInterferers", "Number of WiFi interfering nodes", nWifiInterferers);
+    cmd.AddValue("nodePositions", "CSV file with node positions (nodeId,x,y,z)", nodePositionsFile);
+    cmd.AddValue("obstacles", "CSV file with obstacles (x,y,width,height,attenuationDb)", obstaclesFile);
     cmd.Parse(argc, argv);
     
     LogComponentEnable("LoRaWANSimExample", LOG_LEVEL_INFO);
@@ -50,18 +54,24 @@ int main(int argc, char* argv[]) {
         SimulationRunner simOff(nDevices, simulationTime, appPeriodSeconds, radius, 
                                "no_adr_" + csvFileName, ADRMethod::OFF, nWifiInterferers, 
                                environmentalModeling);
+        if (!nodePositionsFile.empty()) simOff.SetNodePositionsFile(nodePositionsFile);
+        if (!obstaclesFile.empty()) simOff.SetObstaclesFile(obstaclesFile);
         simOff.Run();
         
         std::cout << "\n▶ Running simulation for CLASSICAL ADR..." << std::endl;
         SimulationRunner simOn(nDevices, simulationTime, appPeriodSeconds, radius, 
                               "adr_" + csvFileName, ADRMethod::ON, nWifiInterferers, 
                               environmentalModeling);
+        if (!nodePositionsFile.empty()) simOn.SetNodePositionsFile(nodePositionsFile);
+        if (!obstaclesFile.empty()) simOn.SetObstaclesFile(obstaclesFile);
         simOn.Run();
         
         std::cout << "\n▶ Running simulation for DDQN-PER ADR..." << std::endl;
         SimulationRunner simDDQN(nDevices, simulationTime, appPeriodSeconds, radius, 
                                 "ddqn_adr_" + csvFileName, ADRMethod::DDQN, nWifiInterferers, 
                                 environmentalModeling);
+        if (!nodePositionsFile.empty()) simDDQN.SetNodePositionsFile(nodePositionsFile);
+        if (!obstaclesFile.empty()) simDDQN.SetObstaclesFile(obstaclesFile);
         simDDQN.Run();
     } else {
         ADRMethod adrMethod;
@@ -80,6 +90,17 @@ int main(int argc, char* argv[]) {
         SimulationRunner sim(nDevices, simulationTime, appPeriodSeconds, radius, 
                            filePrefix + csvFileName, adrMethod, nWifiInterferers, 
                            environmentalModeling);
+        
+        // Set CSV files if provided
+        if (!nodePositionsFile.empty()) {
+            std::cout << "📍 Using node positions from: " << nodePositionsFile << std::endl;
+            sim.SetNodePositionsFile(nodePositionsFile);
+        }
+        if (!obstaclesFile.empty()) {
+            std::cout << "🏢 Using obstacles from: " << obstaclesFile << std::endl;
+            sim.SetObstaclesFile(obstaclesFile);
+        }
+        
         sim.Run();
     }
     

@@ -32,6 +32,8 @@ private:
     std::string m_csvFileName;
     ADRMethod m_adrMethod;
     uint32_t m_nWifiInterferers;
+    std::string m_nodePositionsFile;
+    std::string m_obstaclesFile;
     
     // Core components
     EnvironmentManager m_environment;
@@ -83,6 +85,10 @@ public:
                     double radius, const std::string& csvFileName, ADRMethod adrMethod,
                     uint32_t nWifiInterferers, bool enableEnvironmentalModeling);
     ~SimulationRunner();
+    
+    // Set CSV files for node positions and obstacles
+    void SetNodePositionsFile(const std::string& filePath);
+    void SetObstaclesFile(const std::string& filePath);
     
     void Run();
     
