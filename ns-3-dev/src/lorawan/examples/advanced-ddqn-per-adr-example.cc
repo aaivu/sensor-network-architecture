@@ -937,12 +937,35 @@ void OnDataRateChange(std::string context, uint8_t oldValue, uint8_t newValue) {
 }
 
 /**
- * Calculate energy consumption for a packet
+ * UNIFIED ENERGY CALCULATION METHOD
+ * 
+ * This function calculates energy consumption using the same formula
+ * for all ADR methods (No ADR, Classical ADR, and DDQN-PER ADR).
+ * 
+ * Energy Model:
+ * 1. TX Energy: Includes exponential SF penalty for fair comparison
+ *    - Base current: 20 mA
+ *    - TX power component: (txPowerDbm - 2) * 2 mA per dBm above 2 dBm
+ *    - SF penalty: 2^(SF-7) multiplier (accounts for longer air time)
+ *    - TX time: Calculated using LoRaPhy::GetOnAirTime()
+ * 2. RX Energy: Fixed energy for receive windows (Class A)
+ *    - RX1 window: 10 mA * 1.0 s = 0.033 mJ
+ *    - RX2 window: 10 mA * 1.0 s = 0.033 mJ (if RX1 fails)
+ * 
+ * Formula:
+ *   Energy = (TX_Energy + RX_Energy)
+ *   TX_Energy = (txCurrent * voltage * txTime * sfFactor) / 1000
+ *   RX_Energy = (rxCurrent * voltage * rxTime) / 1000
+ * 
+ * This ensures fair energy comparison across all ADR methods.
  */
 double CalculateEnergyConsumption(int sf, double txPowerDbm, uint32_t payloadBytes) {
-    double txCurrent = 120.0;
-    double powerCurrent = (txPowerDbm - 2.0) * 3.2;
+    // TX current calculation (consistent with DDQN formula)
+    double baseCurrent = 20.0; // mA baseline
+    double txCurrent = baseCurrent + (txPowerDbm - 2.0) * 2.0; // TX power dependent
+    double voltage = 3.3; // Operating voltage (V)
     
+    // Calculate actual TX time using ns-3 LoRa model
     LoraTxParameters txParams;
     txParams.sf = sf;
     txParams.headerDisabled = false;
@@ -955,10 +978,24 @@ double CalculateEnergyConsumption(int sf, double txPowerDbm, uint32_t payloadByt
     Ptr<Packet> dummyPacket = Create<Packet>(payloadBytes);
     Time txTime = LoraPhy::GetOnAirTime(dummyPacket, txParams);
     
-    double totalCurrent = txCurrent + powerCurrent;
-    double energyMj = (totalCurrent * 3.3 * txTime.GetSeconds()) / 1000.0;
+    // SF penalty: Higher SF = exponentially longer air time
+    // This is critical for fair comparison between ADR methods
+    double sfFactor = std::pow(2.0, sf - 7);
     
-    return energyMj;
+    // TX energy with SF penalty
+    double txEnergyMj = (txCurrent * voltage * txTime.GetSeconds() * sfFactor) / 1000.0;
+    
+    // RX energy for Class A device (two receive windows)
+    // RX1: Opens 1s after TX end
+    // RX2: Opens 2s after TX end (if RX1 fails)
+    double rxCurrent = 10.0; // mA (typical LoRa RX current)
+    double rxWindowDuration = 1.0; // seconds per window
+    double rxEnergyMj = (rxCurrent * voltage * rxWindowDuration) / 1000.0;
+    
+    // Total energy = TX + RX windows
+    double totalEnergyMj = txEnergyMj + rxEnergyMj;
+    
+    return totalEnergyMj;
 }
 
 /**
@@ -1592,14 +1629,34 @@ int main(int argc, char* argv[]) {
     }
     
     if (adrModeStr == "all") {
-        std::cout << "\nRunning simulation for NO ADR..." << std::endl;
+        std::cout << "\n========================================" << std::endl;
+        std::cout << "RUNNING ALL ADR METHODS COMPARISON" << std::endl;
+        std::cout << "Simulation Time: " << simulationTime << " seconds" << std::endl;
+        std::cout << "Number of Devices: " << nDevices << std::endl;
+        std::cout << "App Period: " << appPeriodSeconds << " seconds" << std::endl;
+        std::cout << "========================================\n" << std::endl;
+        
+        std::cout << "\n[1/3] Running simulation for NO ADR..." << std::endl;
         RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "no_adr_" + csvFileName, ADRMethod::OFF, nWifiInterferers);
         
-        std::cout << "\nRunning simulation for CLASSICAL ADR..." << std::endl;
+        std::cout << "\n[2/3] Running simulation for CLASSICAL ADR..." << std::endl;
         RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "adr_" + csvFileName, ADRMethod::ON, nWifiInterferers);
         
-        std::cout << "\nRunning simulation for DDQN-PER ADR..." << std::endl;
+        std::cout << "\n[3/3] Running simulation for DDQN-PER ADR..." << std::endl;
         RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "ddqn_adr_" + csvFileName, ADRMethod::DDQN, nWifiInterferers);
+        
+        std::cout << "\n========================================" << std::endl;
+        std::cout << "ALL ADR METHODS COMPARISON COMPLETED" << std::endl;
+        std::cout << "All three methods used the same:" << std::endl;
+        std::cout << "  - Simulation time: " << simulationTime << "s" << std::endl;
+        std::cout << "  - Device count: " << nDevices << std::endl;
+        std::cout << "  - RNG seed: 12345 (fixed)" << std::endl;
+        std::cout << "  - Packet interval: " << appPeriodSeconds << "s" << std::endl;
+        std::cout << "Output files:" << std::endl;
+        std::cout << "  - no_adr_" << csvFileName << std::endl;
+        std::cout << "  - adr_" << csvFileName << std::endl;
+        std::cout << "  - ddqn_adr_" << csvFileName << std::endl;
+        std::cout << "========================================\n" << std::endl;
     } else {
         ADRMethod adrMethod;
         std::string filePrefix;
@@ -1621,6 +1678,14 @@ int main(int argc, char* argv[]) {
 
 void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSeconds, 
                   double radius, const std::string& csvFileName, ADRMethod adrMethod, uint32_t nWifiInterferers) {
+    
+    std::cout << "\n================================================" << std::endl;
+    std::cout << "Starting simulation with parameters:" << std::endl;
+    std::cout << "  Duration: " << simulationTime << " seconds" << std::endl;
+    std::cout << "  App Period: " << appPeriodSeconds << " seconds" << std::endl;
+    std::cout << "  Devices: " << nDevices << std::endl;
+    std::cout << "  ADR Mode: " << (adrMethod == ADRMethod::ON ? "CLASSICAL" : (adrMethod == ADRMethod::DDQN ? "DDQN-PER" : "OFF")) << std::endl;
+    std::cout << "================================================\n" << std::endl;
     
     completedPackets.clear();
     deviceFrameCounters.clear();
@@ -1717,6 +1782,9 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
     
     phyHelper.SetDeviceType(LoraPhyHelper::ED);
     macHelper.SetDeviceType(LorawanMacHelper::ED_A);
+    // **CRITICAL: Use ALOHA region to disable duty cycle enforcement for fair comparison**
+    macHelper.SetRegion(LorawanMacHelper::ALOHA);
+    
     NetDeviceContainer endDevicesNetDevs = helper.Install(phyHelper, macHelper, endDevices);
     
     for (uint32_t i = 0; i < endDevicesNetDevs.GetN(); ++i) {
@@ -1826,9 +1894,12 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
         }
     }
     
+    std::cout << "\n🔧 Configuring " << nDevices << " devices with period " << appPeriodSeconds << "s" << std::endl;
+    
     for (uint32_t i = 0; i < nDevices; i++) {
         PeriodicSenderHelper appHelper = PeriodicSenderHelper();
         appHelper.SetPeriod(Seconds(appPeriodSeconds));
+        appHelper.SetPacketSize(20);  // Ensure packet size is set
         
         ApplicationContainer app = appHelper.Install(endDevices.Get(i));
         
@@ -1836,8 +1907,14 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
         randomStart->SetAttribute("Min", DoubleValue(0.0));
         randomStart->SetAttribute("Max", DoubleValue(appPeriodSeconds));
         randomStart->SetStream(5000 + i);  // Fixed stream for consistent app start times
-        app.Start(Seconds(randomStart->GetValue()));
+        double startTime = randomStart->GetValue();
+        app.Start(Seconds(startTime));
+        
+        std::cout << "  Device " << i << " (Node " << endDevices.Get(i)->GetId() 
+                  << "): Period=" << appPeriodSeconds << "s, StartTime=" << startTime << "s" << std::endl;
     }
+    
+    std::cout << "✅ All devices configured\n" << std::endl;
     
     Config::ConnectWithoutContext("/NodeList/*/DeviceList/*/$ns3::LoraNetDevice/Phy/$ns3::EndDeviceLoraPhy/StartSending",
                                  MakeCallback(&OnTransmissionStart));
@@ -1855,6 +1932,27 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
     
     Simulator::Stop(Seconds(simulationTime));
     Simulator::Run();
+    
+    // **CRITICAL: Verify packet count after simulation**
+    uint32_t totalPacketsSent = 0;
+    uint32_t totalPacketsReceived = 0;
+    for (const auto& record : completedPackets) {
+        totalPacketsSent++;
+        if (record.packetReceived) {
+            totalPacketsReceived++;
+        }
+    }
+    
+    double pdr = totalPacketsSent > 0 ? (100.0 * totalPacketsReceived / totalPacketsSent) : 0.0;
+    
+    std::cout << "\n=== SIMULATION STATISTICS ===" << std::endl;
+    std::cout << "Simulation Duration: " << simulationTime << " seconds" << std::endl;
+    std::cout << "Total Packets Sent: " << totalPacketsSent << std::endl;
+    std::cout << "Total Packets Received: " << totalPacketsReceived << std::endl;
+    std::cout << "Packet Delivery Ratio: " << std::fixed << std::setprecision(2) << pdr << "%" << std::endl;
+    std::cout << "Output File: " << csvFileName << std::endl;
+    std::cout << "============================\n" << std::endl;
+    
     Simulator::Destroy();
     
     std::cout << "Simulation completed!" << std::endl;
