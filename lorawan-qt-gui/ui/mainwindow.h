@@ -13,6 +13,8 @@
 #include <QLabel>
 #include <QFuture>
 #include <QFutureWatcher>
+#include <QFile>
+#include <QTextStream>
 #include "mapscene.h"
 
 // Forward declaration
@@ -70,6 +72,13 @@ private:
     bool validateParameters();
     QString getOutputFilename() const;
     
+    // Logging and output management
+    void logMessage(const QString& message, const QString& level = "INFO");
+    void createOutputDirectory();
+    QString getOutputDirectory() const;
+    void exportNodePositions(const QString& filepath);
+    void exportObstacles(const QString& filepath);
+    
     // UI Components - Parameter Panel
     QWidget* m_parameterPanel;
     QSpinBox* m_numDevicesSpin;
@@ -109,6 +118,9 @@ private:
     QFutureWatcher<void>* m_simulationWatcher;
     bool m_simulationRunning;
     QString m_currentOutputFile;
+    QString m_outputDirectory;
+    QFile* m_logFile;
+    QTextStream* m_logStream;
     
     // Actions
     QAction* m_newAction;

@@ -14,6 +14,12 @@
 #include <QThread>
 #include <QWheelEvent>
 #include <QEvent>
+#include <QDir>
+#include <QDateTime>
+#include <QProcess>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonArray>
 
 #ifdef ENABLE_NS3
 #include "ns3/core-module.h"
@@ -23,7 +29,12 @@
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , m_simulationRunning(false)
+    , m_logFile(nullptr)
+    , m_logStream(nullptr)
 {
+    // Create output directory structure
+    createOutputDirectory();
+    
     setupUi();
     createActions();
     createMenuBar();
@@ -39,6 +50,8 @@ MainWindow::MainWindow(QWidget* parent)
     // Create initial nodes for visualization
     m_mapScene->createNodes(m_numDevicesSpin->value(), m_radiusSpin->value());
     
+    logMessage("=== LoRaWAN Simulator Started ===", "INFO");
+    logMessage(QString("Output directory: %1").arg(m_outputDirectory), "INFO");
     updateStatusBar("Ready");
 }
 
@@ -46,6 +59,19 @@ MainWindow::~MainWindow() {
     if (m_simulationRunning) {
         m_simulationWatcher->cancel();
         m_simulationWatcher->waitForFinished();
+    }
+    
+    logMessage("=== LoRaWAN Simulator Closed ===", "INFO");
+    
+    // Close log file
+    if (m_logStream) {
+        delete m_logStream;
+        m_logStream = nullptr;
+    }
+    if (m_logFile) {
+        m_logFile->close();
+        delete m_logFile;
+        m_logFile = nullptr;
     }
 }
 
@@ -178,7 +204,7 @@ void MainWindow::setupParameterPanel() {
     simLayout->addWidget(new QLabel("WiFi Interferers:"), 2, 0);
     m_wifiInterferersSpin = new QSpinBox();
     m_wifiInterferersSpin->setRange(0, 100);
-    m_wifiInterferersSpin->setValue(5);
+    m_wifiInterferersSpin->setValue(3);  // Default to 3 interferers
     simLayout->addWidget(m_wifiInterferersSpin, 2, 1);
     
     simLayout->addWidget(new QLabel("ADR Mode:"), 3, 0);
@@ -197,8 +223,9 @@ void MainWindow::setupParameterPanel() {
     QVBoxLayout* outputLayout = new QVBoxLayout();
     
     QHBoxLayout* fileLayout = new QHBoxLayout();
-    fileLayout->addWidget(new QLabel("CSV File:"));
+    fileLayout->addWidget(new QLabel("CSV Filename:"));
     m_csvFileEdit = new QLineEdit("simulation_results.csv");
+    m_csvFileEdit->setToolTip("Filename only - will be saved in output directory");
     fileLayout->addWidget(m_csvFileEdit, 1);
     m_browseButton = new QPushButton("Browse...");
     connect(m_browseButton, &QPushButton::clicked, [this]() {
@@ -384,9 +411,49 @@ void MainWindow::onRunSimulation() {
         return;
     }
     
+    logMessage("========================================", "INFO");
+    logMessage("Starting new simulation run", "INFO");
+    logMessage("========================================", "INFO");
+    
     // Create nodes on map if not already done
     if (m_mapScene->getNodePositions().isEmpty()) {
         m_mapScene->createNodes(m_numDevicesSpin->value(), m_radiusSpin->value());
+    }
+    
+    // Log simulation parameters
+    logMessage("=== Simulation Parameters ===", "INFO");
+    logMessage(QString("Number of Devices: %1").arg(m_numDevicesSpin->value()), "INFO");
+    logMessage(QString("Deployment Radius: %1 m").arg(m_radiusSpin->value()), "INFO");
+    logMessage(QString("Simulation Time: %1 s").arg(m_simTimeSpin->value()), "INFO");
+    logMessage(QString("App Period: %1 s").arg(m_appPeriodSpin->value()), "INFO");
+    logMessage(QString("WiFi Interferers: %1").arg(m_wifiInterferersSpin->value()), "INFO");
+    logMessage(QString("ADR Mode: %1").arg(m_adrModeCombo->currentText()), "INFO");
+    logMessage(QString("Output Directory: %1").arg(m_outputDirectory), "INFO");
+    
+    // Export configuration
+    QString configDir = m_outputDirectory + "/config";
+    QString positionsFile = configDir + "/node_positions.csv";
+    QString obstaclesFile = configDir + "/obstacles.csv";
+    
+    exportNodePositions(positionsFile);
+    exportObstacles(obstaclesFile);
+    
+    // Save configuration as JSON
+    QJsonObject config;
+    config["numDevices"] = m_numDevicesSpin->value();
+    config["radius"] = m_radiusSpin->value();
+    config["simulationTime"] = m_simTimeSpin->value();
+    config["appPeriod"] = m_appPeriodSpin->value();
+    config["wifiInterferers"] = m_wifiInterferersSpin->value();
+    config["adrMode"] = m_adrModeCombo->currentText();
+    config["timestamp"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+    
+    QFile configFile(configDir + "/simulation_config.json");
+    if (configFile.open(QIODevice::WriteOnly)) {
+        QJsonDocument doc(config);
+        configFile.write(doc.toJson(QJsonDocument::Indented));
+        configFile.close();
+        logMessage("Configuration saved to: " + configDir + "/simulation_config.json", "INFO");
     }
     
     m_simulationRunning = true;
@@ -394,6 +461,7 @@ void MainWindow::onRunSimulation() {
     m_stopButton->setEnabled(true);
     m_progressBar->setValue(0);
     updateStatusBar("Running simulation...");
+    logMessage("Simulation started...", "INFO");
     
     // Run in background thread
     QFuture<void> future = QtConcurrent::run([this]() {
@@ -404,16 +472,34 @@ void MainWindow::onRunSimulation() {
 }
 
 void MainWindow::onStopSimulation() {
+    logMessage("User requested simulation stop", "WARNING");
     m_simulationWatcher->cancel();
     m_simulationRunning = false;
     m_runButton->setEnabled(true);
     m_stopButton->setEnabled(false);
     updateStatusBar("Simulation stopped by user");
+    logMessage("Simulation stopped", "WARNING");
 }
 
 void MainWindow::runSimulationThread() {
+    QMetaObject::invokeMethod(this, [this]() {
+        logMessage("Building ns-3 simulation command...", "INFO");
+    }, Qt::QueuedConnection);
+    
+    // Determine output file path in our structured directory
+    QString csvDir = m_outputDirectory + "/results-csv";
+    QString outputCsvFile = csvDir + "/" + m_csvFileEdit->text();
+    
+    QMetaObject::invokeMethod(this, [this, outputCsvFile]() {
+        logMessage("Output CSV file: " + outputCsvFile, "INFO");
+    }, Qt::QueuedConnection);
+    
 #ifdef ENABLE_NS3
     try {
+        QMetaObject::invokeMethod(this, [this]() {
+            logMessage("Running ns-3 compiled simulation...", "INFO");
+        }, Qt::QueuedConnection);
+        
         // Determine ADR method
         QString adrMode = m_adrModeCombo->currentData().toString();
         ns3::lorawan::ADRMethod adrMethod;
@@ -431,33 +517,287 @@ void MainWindow::runSimulationThread() {
             m_simTimeSpin->value(),                 // simulationTime
             m_appPeriodSpin->value(),               // appPeriodSeconds
             m_radiusSpin->value(),                  // radius
-            m_csvFileEdit->text().toStdString(),    // csvFileName
+            outputCsvFile.toStdString(),            // csvFileName
             adrMethod,                              // adrMethod
             m_wifiInterferersSpin->value(),         // nWifiInterferers
-            m_environmentModelingCheck->isChecked() // enableEnvironmentalModeling
+            false                                   // enableEnvironmentalModeling
         );
         
-        // Note: Node positions and obstacles from map editor are not currently
-        // passed to the simulation runner as it generates random positions.
-        // This could be extended in future versions.
+        QMetaObject::invokeMethod(this, [this]() {
+            logMessage("ns-3 simulation initialized successfully", "INFO");
+            logMessage("Executing simulation (this may take a while)...", "INFO");
+        }, Qt::QueuedConnection);
         
         // Run simulation
         runner.Run();
         
-        m_currentOutputFile = m_csvFileEdit->text();
+        m_currentOutputFile = outputCsvFile;
+        
+        QMetaObject::invokeMethod(this, [this]() {
+            logMessage("ns-3 simulation completed successfully", "SUCCESS");
+        }, Qt::QueuedConnection);
         
     } catch (const std::exception& e) {
-        // Error handling done in onSimulationFinished
         QString errorMsg = QString("Simulation error: %1").arg(e.what());
         QMetaObject::invokeMethod(this, [this, errorMsg]() {
+            logMessage(errorMsg, "ERROR");
             QMessageBox::critical(this, "Simulation Error", errorMsg);
         }, Qt::QueuedConnection);
     }
 #else
-    // Placeholder simulation when ns-3 is not enabled
-    // Simulate a delay
-    QThread::msleep(2000);
-    m_currentOutputFile = m_csvFileEdit->text();
+    // Fallback: Run ns-3 via command line
+    QMetaObject::invokeMethod(this, [this]() {
+        logMessage("ns-3 not compiled in. Running via command line...", "INFO");
+    }, Qt::QueuedConnection);
+    
+    // Build ns-3 command
+    // Find ns-3-dev directory relative to lorawan-qt-gui
+    QString guiDir = QDir::currentPath();
+    QDir searchDir(guiDir);
+    
+    // Go up until we find ns-3-dev
+    QString ns3Dir;
+    for (int i = 0; i < 5; ++i) {
+        if (QDir(searchDir.absolutePath() + "/ns-3-dev").exists()) {
+            ns3Dir = searchDir.absolutePath() + "/ns-3-dev";
+            break;
+        }
+        searchDir.cdUp();
+    }
+    
+    if (ns3Dir.isEmpty()) {
+        QMetaObject::invokeMethod(this, [this]() {
+            logMessage("ERROR: Could not find ns-3-dev directory", "ERROR");
+        }, Qt::QueuedConnection);
+        return;
+    }
+    
+    QString adrMode = m_adrModeCombo->currentData().toString();
+    
+    // Just use the filename for csvFile parameter - ns-3 will create it in its directory
+    QString csvFilename = QFileInfo(outputCsvFile).fileName();
+    
+    QString command = QString("./ns3 run \"lorawan-sim-example "
+                             "--nDevices=%1 --radius=%2 --simulationTime=%3 "
+                             "--appPeriod=%4 --adr=%5 --csvFile=%6 "
+                             "--environmental=true --wifiInterferers=%7\"")
+                        .arg(m_numDevicesSpin->value())
+                        .arg(m_radiusSpin->value())
+                        .arg(m_simTimeSpin->value())
+                        .arg(m_appPeriodSpin->value())
+                        .arg(adrMode)
+                        .arg(csvFilename)
+                        .arg(m_wifiInterferersSpin->value());
+    
+    QMetaObject::invokeMethod(this, [this, ns3Dir, command]() {
+        logMessage("Working directory: " + ns3Dir, "INFO");
+        logMessage("Executing command:", "INFO");
+        logMessage(command, "CMD");
+    }, Qt::QueuedConnection);
+    
+    // Execute command
+    QProcess process;
+    process.setWorkingDirectory(ns3Dir);
+    process.start("/bin/bash", QStringList() << "-c" << command);
+    
+    if (!process.waitForStarted()) {
+        QMetaObject::invokeMethod(this, [this]() {
+            logMessage("Failed to start ns-3 process", "ERROR");
+        }, Qt::QueuedConnection);
+        return;
+    }
+    
+    QMetaObject::invokeMethod(this, [this]() {
+        logMessage("ns-3 process started, waiting for completion...", "INFO");
+    }, Qt::QueuedConnection);
+    
+    // Wait for completion (with timeout)
+    if (!process.waitForFinished(600000)) {  // 10 minute timeout
+        QMetaObject::invokeMethod(this, [this]() {
+            logMessage("Simulation timeout or error", "ERROR");
+        }, Qt::QueuedConnection);
+        process.kill();
+        return;
+    }
+    
+    // Get output
+    QString stdOut = process.readAllStandardOutput();
+    QString stdErr = process.readAllStandardError();
+    int exitCode = process.exitCode();
+    
+    QMetaObject::invokeMethod(this, [this, stdOut, stdErr, exitCode]() {
+        if (!stdOut.isEmpty()) {
+            logMessage("=== ns-3 stdout ===", "INFO");
+            logMessage(stdOut, "OUTPUT");
+        }
+        if (!stdErr.isEmpty()) {
+            logMessage("=== ns-3 stderr ===", "WARN");
+            logMessage(stdErr, "ERROR");
+        }
+        logMessage(QString("ns-3 process exited with code: %1").arg(exitCode), 
+                   exitCode == 0 ? "SUCCESS" : "ERROR");
+    }, Qt::QueuedConnection);
+    
+    if (exitCode == 0) {
+        // Try to move generated files to our output directory
+        QMetaObject::invokeMethod(this, [this, ns3Dir, csvDir, adrMode, csvFilename]() {
+            logMessage("Organizing generated files for current run...", "INFO");
+            
+            QString plotsDir = m_outputDirectory + "/plots";
+            
+            // Determine the expected file prefix based on ADR mode
+            // Note: ns-3 creates files with pattern: prefix + csvFilename + "_device_N_dataset.csv"
+            QString expectedPrefix;
+            if (adrMode == "ddqn") {
+                expectedPrefix = "ddqn_adr_";  // ns-3 uses ddqn_adr_ prefix
+            } else if (adrMode == "on") {
+                expectedPrefix = "adr_";
+            } else {
+                expectedPrefix = "no_adr_";
+            }
+            
+            QString expectedFilename = expectedPrefix + csvFilename;
+            QString mainResultFile;
+            
+            // Only copy the main results file for THIS run
+            QDir sourceDir(ns3Dir);
+            QString sourcePath = ns3Dir + "/" + expectedFilename;
+            QString destPath = csvDir + "/" + expectedFilename;
+            
+            if (QFile::exists(sourcePath)) {
+                if (QFile::exists(destPath)) {
+                    QFile::remove(destPath);
+                }
+                if (QFile::copy(sourcePath, destPath)) {
+                    logMessage("Copied main results: " + expectedFilename, "SUCCESS");
+                    mainResultFile = destPath;
+                    m_currentOutputFile = mainResultFile;
+                    
+                    // Delete the source file after copying to avoid accumulation
+                    QFile::remove(sourcePath);
+                } else {
+                    logMessage("Failed to copy: " + expectedFilename, "ERROR");
+                }
+            } else {
+                logMessage("Warning: Expected results file not found: " + expectedFilename, "WARNING");
+                logMessage("Looking for alternative files...", "INFO");
+                
+                // Fallback: look for any recently modified CSV with the correct prefix
+                QFileInfoList files = sourceDir.entryInfoList(QStringList() << (expectedPrefix + "*.csv"), 
+                                                               QDir::Files, 
+                                                               QDir::Time);
+                if (!files.isEmpty()) {
+                    QString fallbackFile = files.first().fileName();
+                    sourcePath = files.first().absoluteFilePath();
+                    destPath = csvDir + "/" + fallbackFile;
+                    
+                    if (QFile::exists(destPath)) {
+                        QFile::remove(destPath);
+                    }
+                    if (QFile::copy(sourcePath, destPath)) {
+                        logMessage("Copied fallback file: " + fallbackFile, "INFO");
+                        mainResultFile = destPath;
+                        m_currentOutputFile = mainResultFile;
+                        QFile::remove(sourcePath);
+                    }
+                }
+            }
+            
+            if (mainResultFile.isEmpty()) {
+                logMessage("ERROR: No results file found for current run!", "ERROR");
+            }
+            
+            // Copy per-device datasets from lorawan_datasets directory ONLY for this run
+            QDir datasetDir(ns3Dir + "/lorawan_datasets");
+            if (datasetDir.exists()) {
+                logMessage("Found lorawan_datasets directory, copying current run's device data...", "INFO");
+                
+                // Only copy files that match the expected prefix to avoid old data
+                // Pattern matches files like: ddqn_adr_simulation_results_device_10_dataset.csv
+                QStringList datasetPattern;
+                datasetPattern << (expectedPrefix + "*device_*.csv");
+                
+                QStringList datasetFiles = datasetDir.entryList(datasetPattern, QDir::Files);
+                int deviceFilesCopied = 0;
+                
+                for (const QString& file : datasetFiles) {
+                    QString sourcePath = datasetDir.absoluteFilePath(file);
+                    QString destPath = csvDir + "/" + file;
+                    if (QFile::exists(destPath)) {
+                        QFile::remove(destPath);
+                    }
+                    if (QFile::copy(sourcePath, destPath)) {
+                        deviceFilesCopied++;
+                        // Delete source to avoid accumulation
+                        QFile::remove(sourcePath);
+                    }
+                }
+                
+                if (deviceFilesCopied > 0) {
+                    logMessage(QString("Copied %1 per-device dataset file(s)").arg(deviceFilesCopied), "INFO");
+                }
+            }
+            
+            // Copy ONLY the plots for THIS run (with matching prefix)
+            QDir plotSourceDir(ns3Dir + "/environment_plots");
+            if (plotSourceDir.exists()) {
+                logMessage("Found environment_plots directory, copying current run's plots...", "INFO");
+                
+                // Only copy plots that match the expected filename pattern
+                QStringList plotPatterns;
+                plotPatterns << (expectedPrefix + "*.*");
+                
+                QStringList plotFiles = plotSourceDir.entryList(plotPatterns, QDir::Files);
+                int plotsCopied = 0;
+                
+                for (const QString& file : plotFiles) {
+                    QString sourcePath = plotSourceDir.absoluteFilePath(file);
+                    QString destPath = plotsDir + "/" + file;
+                    if (QFile::exists(destPath)) {
+                        QFile::remove(destPath);
+                    }
+                    if (QFile::copy(sourcePath, destPath)) {
+                        logMessage("Copied plot: " + file, "INFO");
+                        plotsCopied++;
+                        // Delete source to avoid accumulation
+                        QFile::remove(sourcePath);
+                    }
+                }
+                
+                if (plotsCopied > 0) {
+                    logMessage(QString("Successfully copied %1 plot file(s)").arg(plotsCopied), "SUCCESS");
+                } else {
+                    logMessage("No plots found for current run", "INFO");
+                }
+            }
+            
+            // Check for plots directly in ns3Dir with matching prefix
+            QStringList rootPlotPatterns;
+            rootPlotPatterns << (expectedPrefix + "*.png") 
+                           << (expectedPrefix + "*.pdf") 
+                           << (expectedPrefix + "*.svg");
+            QStringList rootPlots = sourceDir.entryList(rootPlotPatterns, QDir::Files);
+            for (const QString& file : rootPlots) {
+                QString sourcePath = ns3Dir + "/" + file;
+                QString destPath = plotsDir + "/" + file;
+                if (QFile::exists(destPath)) {
+                    QFile::remove(destPath);
+                }
+                if (QFile::copy(sourcePath, destPath)) {
+                    logMessage("Copied plot from root: " + file, "INFO");
+                    QFile::remove(sourcePath);  // Clean up source
+                }
+            }
+            
+            logMessage("File organization complete", "SUCCESS");
+            logMessage("Results location: " + csvDir, "INFO");
+            logMessage("Plots location: " + plotsDir, "INFO");
+        }, Qt::QueuedConnection);
+    } else {
+        QMetaObject::invokeMethod(this, [this]() {
+            logMessage("Simulation failed - no files to copy", "ERROR");
+        }, Qt::QueuedConnection);
+    }
 #endif
 }
 
@@ -468,21 +808,35 @@ void MainWindow::onSimulationFinished() {
     m_progressBar->setValue(100);
     
     if (m_simulationWatcher->isCanceled()) {
+        logMessage("Simulation was canceled by user", "WARNING");
         updateStatusBar("Simulation canceled");
         return;
     }
     
+    logMessage("========================================", "INFO");
+    logMessage("Simulation thread finished", "INFO");
+    logMessage("Processing results...", "INFO");
+    
     updateStatusBar("Simulation completed!");
-    displayResults(m_csvFileEdit->text());
+    displayResults(m_currentOutputFile);
     
     m_exportResultsButton->setEnabled(true);
     m_visualizeButton->setEnabled(true);
+    
+    logMessage("========================================", "SUCCESS");
+    logMessage("Simulation run complete!", "SUCCESS");
+    logMessage(QString("All results saved to: %1").arg(m_outputDirectory), "SUCCESS");
+    logMessage("========================================", "SUCCESS");
 }
 
 void MainWindow::displayResults(const QString& csvPath) {
+    logMessage("Reading results from: " + csvPath, "INFO");
+    
     QFile file(csvPath);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        m_resultsText->setPlainText("Error: Could not open results file");
+        QString errorMsg = "Error: Could not open results file: " + csvPath;
+        m_resultsText->setPlainText(errorMsg);
+        logMessage(errorMsg, "ERROR");
         return;
     }
     
@@ -490,17 +844,30 @@ void MainWindow::displayResults(const QString& csvPath) {
     QString content = in.readAll();
     file.close();
     
+    logMessage(QString("Results file size: %1 bytes").arg(content.size()), "INFO");
+    
     // Parse CSV and compute statistics
     QStringList lines = content.split('\n');
+    logMessage(QString("Total lines in CSV: %1").arg(lines.size()), "INFO");
+    
     int totalDevices = 0;
     double totalPDR = 0.0;
     int sf7 = 0, sf8 = 0, sf9 = 0, sf10 = 0, sf11 = 0, sf12 = 0;
+    int totalPacketsSent = 0;
+    int totalPacketsReceived = 0;
     
     for (int i = 1; i < lines.size(); ++i) {  // Skip header
         QStringList fields = lines[i].split(',');
         if (fields.size() >= 5) {
             totalDevices++;
-            totalPDR += fields[4].toDouble();  // PDR column
+            double pdr = fields[4].toDouble();
+            totalPDR += pdr;
+            
+            // Try to extract packet counts if available
+            if (fields.size() >= 7) {
+                totalPacketsSent += fields[5].toInt();
+                totalPacketsReceived += fields[6].toInt();
+            }
             
             int sf = fields[2].toInt();  // SF column
             switch(sf) {
@@ -514,26 +881,58 @@ void MainWindow::displayResults(const QString& csvPath) {
         }
     }
     
+    double avgPDR = totalDevices > 0 ? totalPDR / totalDevices : 0.0;
+    
+    // Log statistics
+    logMessage("=== Results Statistics ===", "INFO");
+    logMessage(QString("Total Devices: %1").arg(totalDevices), "INFO");
+    logMessage(QString("Average PDR: %1%").arg(avgPDR, 0, 'f', 2), "INFO");
+    logMessage(QString("SF Distribution: SF7=%1, SF8=%2, SF9=%3, SF10=%4, SF11=%5, SF12=%6")
+        .arg(sf7).arg(sf8).arg(sf9).arg(sf10).arg(sf11).arg(sf12), "INFO");
+    
+    if (totalPacketsSent > 0) {
+        logMessage(QString("Total Packets Sent: %1").arg(totalPacketsSent), "INFO");
+        logMessage(QString("Total Packets Received: %1").arg(totalPacketsReceived), "INFO");
+        logMessage(QString("Overall Network PDR: %1%")
+            .arg(100.0 * totalPacketsReceived / totalPacketsSent, 0, 'f', 2), "INFO");
+    }
+    
     QString summary = QString(
         "<h3>Simulation Summary</h3>"
         "<p><b>Total Devices:</b> %1</p>"
         "<p><b>Average PDR:</b> %2%</p>"
-        "<p><b>Output File:</b> %3</p>"
+        "<p><b>Output Directory:</b> <a href=\"file://%3\">%3</a></p>"
+        "<p><b>CSV File:</b> %4</p>"
         "<h4>Spreading Factor Distribution:</h4>"
         "<ul>"
-        "<li>SF7: %4 devices</li>"
-        "<li>SF8: %5 devices</li>"
-        "<li>SF9: %6 devices</li>"
-        "<li>SF10: %7 devices</li>"
-        "<li>SF11: %8 devices</li>"
-        "<li>SF12: %9 devices</li>"
+        "<li>SF7: %5 devices</li>"
+        "<li>SF8: %6 devices</li>"
+        "<li>SF9: %7 devices</li>"
+        "<li>SF10: %8 devices</li>"
+        "<li>SF11: %9 devices</li>"
+        "<li>SF12: %10 devices</li>"
         "</ul>"
     ).arg(totalDevices)
-     .arg(totalDevices > 0 ? totalPDR / totalDevices : 0.0, 0, 'f', 2)
+     .arg(avgPDR, 0, 'f', 2)
+     .arg(m_outputDirectory)
      .arg(csvPath)
      .arg(sf7).arg(sf8).arg(sf9).arg(sf10).arg(sf11).arg(sf12);
     
+    if (totalPacketsSent > 0) {
+        summary += QString(
+            "<h4>Packet Statistics:</h4>"
+            "<ul>"
+            "<li>Total Packets Sent: %1</li>"
+            "<li>Total Packets Received: %2</li>"
+            "<li>Overall Network PDR: %3%</li>"
+            "</ul>"
+        ).arg(totalPacketsSent)
+         .arg(totalPacketsReceived)
+         .arg(100.0 * totalPacketsReceived / totalPacketsSent, 0, 'f', 2);
+    }
+    
     m_resultsText->setHtml(summary);
+    logMessage("Results displayed successfully", "SUCCESS");
 }
 
 // ============================================================================
@@ -615,4 +1014,125 @@ void MainWindow::onImportConfig() {
 
 void MainWindow::onSimulationProgress(int progress) {
     m_progressBar->setValue(progress);
+}
+
+// ============================================================================
+// Logging and Output Management
+// ============================================================================
+
+void MainWindow::createOutputDirectory() {
+    // Create output directories in lorawan-qt-gui root
+    QString guiBaseDir = QDir(QCoreApplication::applicationDirPath()).absolutePath();
+    // Go up one level from build directory to lorawan-qt-gui root
+    QDir guiDir(guiBaseDir);
+    guiDir.cdUp();
+    QString guiRoot = guiDir.absolutePath();
+    
+    // Create timestamped output directory
+    QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
+    m_outputDirectory = guiRoot + "/simulation_results/run_" + timestamp;
+    
+    QDir dir;
+    if (!dir.mkpath(m_outputDirectory)) {
+        QMessageBox::warning(this, "Directory Error", 
+            "Could not create output directory: " + m_outputDirectory);
+        m_outputDirectory = guiRoot;
+        return;
+    }
+    
+    // Create subdirectories with specific names requested
+    dir.mkpath(m_outputDirectory + "/results-csv");
+    dir.mkpath(m_outputDirectory + "/plots");
+    dir.mkpath(m_outputDirectory + "/config");
+    
+    // Initialize log file
+    QString logPath = m_outputDirectory + "/simulation.log";
+    m_logFile = new QFile(logPath);
+    if (m_logFile->open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Append)) {
+        m_logStream = new QTextStream(m_logFile);
+    }
+}
+
+QString MainWindow::getOutputDirectory() const {
+    return m_outputDirectory;
+}
+
+void MainWindow::logMessage(const QString& message, const QString& level) {
+    QString timestamp = QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz");
+    QString logLine = QString("[%1] [%2] %3").arg(timestamp).arg(level).arg(message);
+    
+    // Write to file
+    if (m_logStream) {
+        *m_logStream << logLine << "\n";
+        m_logStream->flush();
+    }
+    
+    // Write to console/terminal
+    qDebug().noquote() << logLine;
+    
+    // Also append to results text if UI is visible
+    if (m_resultsText) {
+        QString currentText = m_resultsText->toPlainText();
+        if (!currentText.isEmpty() && currentText.startsWith("<")) {
+            // HTML content - clear it for log view
+            m_resultsText->clear();
+        }
+        m_resultsText->append(logLine);
+    }
+}
+
+void MainWindow::exportNodePositions(const QString& filepath) {
+    QFile file(filepath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        logMessage("Failed to export node positions to: " + filepath, "ERROR");
+        return;
+    }
+    
+    QTextStream out(&file);
+    out << "NodeID,X,Y,Type\n";
+    
+    QVector<QPointF> positions = m_mapScene->getNodePositions();
+    for (int i = 0; i < positions.size(); ++i) {
+        QString type = (i == 0) ? "Gateway" : "EndDevice";
+        out << i << "," 
+            << positions[i].x() << "," 
+            << positions[i].y() << "," 
+            << type << "\n";
+    }
+    
+    file.close();
+    logMessage(QString("Exported %1 node positions to: %2")
+        .arg(positions.size()).arg(filepath), "INFO");
+}
+
+void MainWindow::exportObstacles(const QString& filepath) {
+    QVector<ObstacleData> obstacles = m_mapScene->getObstacles();
+    
+    if (obstacles.isEmpty()) {
+        logMessage("No obstacles to export", "INFO");
+        return;
+    }
+    
+    QFile file(filepath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        logMessage("Failed to export obstacles to: " + filepath, "ERROR");
+        return;
+    }
+    
+    QTextStream out(&file);
+    out << "ObstacleID,CenterX,CenterY,Width,Height,AttenuationDB\n";
+    
+    for (int i = 0; i < obstacles.size(); ++i) {
+        const ObstacleData& obs = obstacles[i];
+        out << i << "," 
+            << obs.x << "," 
+            << obs.y << "," 
+            << obs.width << "," 
+            << obs.height << "," 
+            << obs.attenuationDb << "\n";
+    }
+    
+    file.close();
+    logMessage(QString("Exported %1 obstacles to: %2")
+        .arg(obstacles.size()).arg(filepath), "INFO");
 }
