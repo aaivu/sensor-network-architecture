@@ -313,5 +313,22 @@ void EnvironmentManager::Clear() {
     m_nodeTxPowers.clear();
 }
 
+void EnvironmentManager::AddObstacle(const Vector& position, double width, double height, double attenuationDb) {
+    UrbanObstacle obstacle;
+    obstacle.position = position;
+    obstacle.width = width;
+    obstacle.height = height;
+    obstacle.attenuationDb = attenuationDb;
+    m_urbanObstacles.push_back(obstacle);
+}
+
+void EnvironmentManager::ClearObstacles() {
+    m_urbanObstacles.clear();
+}
+
+uint32_t EnvironmentManager::GetObstacleCount() const {
+    return m_urbanObstacles.size();
+}
+
 } // namespace lorawan
 } // namespace ns3

@@ -2,11 +2,13 @@ build_lib(
   LIBNAME lorawan-sim
   SOURCE_FILES
     model/adr-ddqn.cc
+    model/csv-reader.cc
     model/environment.cc
     model/packet-recorder.cc
     model/simulation-runner.cc
   HEADER_FILES
     model/adr-ddqn.h
+    model/csv-reader.h
     model/environment.h
     model/packet-recorder.h
     model/simulation-runner.h

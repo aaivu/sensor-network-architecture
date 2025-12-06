@@ -58,6 +58,11 @@ public:
     void SetupWiFiInterferers(double radius, uint32_t nInterferers);
     void InitializeHardwareVariability(uint32_t nDevices);
     
+    // Load obstacles from external list
+    void AddObstacle(const Vector& position, double width, double height, double attenuationDb);
+    void ClearObstacles();
+    uint32_t GetObstacleCount() const;
+    
     void SetChannel(Ptr<LoraChannel> channel);
     Ptr<LoraChannel> GetChannel() const;
     void SetNodePosition(uint32_t nodeId, const Vector& position);
