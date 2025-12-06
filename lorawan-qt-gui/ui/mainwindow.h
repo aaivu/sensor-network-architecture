@@ -63,8 +63,12 @@ private:
     void createMenuBar();
     
     // Simulation
+    void cleanupOldDatasets();
     void runSimulationThread();
+    void organizeSimulationFiles(const QString& ns3Dir, const QString& csvDir, 
+                                  const QString& adrMode, const QString& csvFilename);
     void displayResults(const QString& csvPath);
+    void runAnalysisScript();
     void updateStatusBar(const QString& message);
     void updateMapInfo();
     
@@ -87,8 +91,6 @@ private:
     QDoubleSpinBox* m_appPeriodSpin;
     QSpinBox* m_wifiInterferersSpin;
     QComboBox* m_adrModeCombo;
-    QLineEdit* m_csvFileEdit;
-    QPushButton* m_browseButton;
     
     // UI Components - Map View
     QGraphicsView* m_mapView;

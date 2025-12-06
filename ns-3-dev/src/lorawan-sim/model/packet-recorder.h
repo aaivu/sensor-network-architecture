@@ -51,6 +51,7 @@ private:
     std::vector<PacketRecord> m_completedPackets;
     std::map<uint32_t, uint32_t> m_deviceFrameCounters;
     std::map<uint32_t, DeviceMetrics> m_deviceMetrics;
+    std::string m_outputDir;
     
 public:
     PacketRecorder();
@@ -66,6 +67,8 @@ public:
     
     const std::vector<PacketRecord>& GetCompletedPackets() const;
     void WriteCSVOutput(const std::string& filename) const;
+    
+    void SetOutputDirectory(const std::string& dirPath);
     
     void Clear();
 };

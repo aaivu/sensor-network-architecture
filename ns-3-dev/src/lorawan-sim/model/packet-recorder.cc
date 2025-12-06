@@ -10,7 +10,8 @@
 namespace ns3 {
 namespace lorawan {
 
-PacketRecorder::PacketRecorder() {
+PacketRecorder::PacketRecorder() 
+    : m_outputDir("lorawan_datasets") {
 }
 
 PacketRecorder::~PacketRecorder() {
@@ -76,8 +77,12 @@ const std::vector<PacketRecord>& PacketRecorder::GetCompletedPackets() const {
     return m_completedPackets;
 }
 
+void PacketRecorder::SetOutputDirectory(const std::string& dirPath) {
+    m_outputDir = dirPath;
+}
+
 void PacketRecorder::WriteCSVOutput(const std::string& filename) const {
-    std::string folderName = "lorawan_datasets";
+    std::string folderName = m_outputDir;
     system(("mkdir -p " + folderName).c_str());
     
     std::string baseFilename = filename;
@@ -143,7 +148,7 @@ void PacketRecorder::WriteCSVOutput(const std::string& filename) const {
     std::cout << "\n=== REALISTIC ns-3 LoRaWAN SIMULATION RESULTS ===" << std::endl;
     std::cout << "Total packets transmitted: " << totalPackets << std::endl;
     std::cout << "Successfully received: " << receivedPackets << " (" << successRate << "%)" << std::endl;
-    std::cout << "Per-device datasets saved to: lorawan_datasets/ folder" << std::endl;
+    std::cout << "Per-device datasets saved to: " << m_outputDir << "/ folder" << std::endl;
 }
 
 void PacketRecorder::Clear() {

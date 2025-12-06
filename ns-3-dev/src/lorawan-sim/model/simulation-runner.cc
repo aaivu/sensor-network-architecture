@@ -54,6 +54,10 @@ void SimulationRunner::SetObstaclesFile(const std::string& filePath) {
     m_obstaclesFile = filePath;
 }
 
+void SimulationRunner::SetOutputDirectory(const std::string& dirPath) {
+    m_recorder.SetOutputDirectory(dirPath);
+}
+
 void SimulationRunner::Clear() {
     m_environment.Clear();
     m_recorder.Clear();
