@@ -4,7 +4,7 @@
 set -e
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-NS3_ROOT="$SCRIPT_DIR/../../.."
+NS3_ROOT="$SCRIPT_DIR/../.."
 
 echo "================================================"
 echo "LoRaWAN Simulation Module - Build & Test Script"
