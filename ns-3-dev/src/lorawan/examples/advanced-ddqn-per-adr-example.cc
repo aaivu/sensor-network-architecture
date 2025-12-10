@@ -343,7 +343,7 @@ private:
     double epsilon, epsilonDecay, epsilonMin, gamma;
     int targetUpdateFreq, updateCounter;
     std::vector<int> sfActions = {7, 8, 9, 10, 11, 12};
-    std::vector<int> tpActions = {2, 8, 14}; 
+    std::vector<int> tpActions = {8, 11, 14};  // ✅ FIX: Higher minimum power (8 dBm instead of 2)
     double pdrWeight, energyWeight;
     std::mt19937 rng;
     double getRequiredSNR(int sf) {
@@ -475,98 +475,85 @@ public:
         
         return reward;
     }
+    
+   /**
+    * SIMPLIFIED REWARD FUNCTION - Clear credit assignment
+    * Removes complex penalty scaling that was causing learning issues
+    */
    double calculateAdvancedReward(uint32_t nodeId, double pdr, double energyConsumption, 
                               double snr, bool packetSuccess, int currentSF, double currentTP,
                               double distance, uint32_t packetsSent) {
     double reward = 0.0;
     
-    // **1. PACKET SUCCESS/FAILURE (Primary feedback)**
+    // ========================================
+    // Component 1: Immediate packet outcome (PRIMARY - 50%)
+    // ========================================
     if (packetSuccess) {
-        reward += 50.0;
+        reward += 100.0;  // Strong positive signal
     } else {
-        reward -= 50.0;  // Strong penalty for failure
+        reward -= 30.0;   // Moderate negative (allow exploration)
     }
     
-    // **2. SF APPROPRIATENESS (Most Important) - LoRaWAN Physics**
-    double requiredSnr = getRequiredSNR(currentSF);
-    double snrMargin = snr - requiredSnr;
-    
-    // Poor conditions - MUST use higher SF
-    if (snrMargin < -10.0) {  // Very poor signal
-        if (currentSF < 12) {
-            reward -= 200.0;  // MASSIVE penalty for not using SF12
-            std::cout << "🔴 CRITICAL: SNR=" << snr << "dB requires SF12, using SF=" << currentSF << std::endl;
+    // ========================================
+    // Component 2: PDR trend (SECONDARY - 30%)
+    // Only after enough samples for reliable PDR
+    // ========================================
+    if (packetsSent >= 10) {
+        if (pdr >= 0.8) {
+            reward += 50.0;  // Excellent
+        } else if (pdr >= 0.6) {
+            reward += 30.0;  // Good
+        } else if (pdr >= 0.4) {
+            reward += 10.0;  // Acceptable
+        } else if (pdr >= 0.2) {
+            reward -= 10.0;  // Poor
         } else {
-            reward += 100.0;  // Big bonus for using SF12 correctly
-        }
-    } else if (snrMargin < -5.0) {  // Poor signal
-        if (currentSF < 10) {
-            reward -= 150.0;  // Very large penalty
-        } else {
-            reward += 75.0;   // Good bonus for appropriate SF
-        }
-    } else if (snrMargin < 0.0) {  // Marginal signal
-        if (currentSF < 8) {
-            reward -= 100.0;  // Large penalty for low SF
-        } else {
-            reward += 50.0;   // Bonus for adequate SF
-        }
-    } else if (snrMargin > 15.0) {  // Excellent signal
-        if (currentSF > 7) {
-            reward -= 30.0;   // Penalty for over-engineering (minor)
-        } else {
-            reward += 25.0;   // Bonus for efficiency
+            reward -= 30.0;  // Very poor - need to change something
         }
     }
     
-    // **3. PDR-BASED SF GUIDANCE**
-    if (packetsSent >= 20) {
-        if (pdr < 0.1) {  // Very poor PDR - emergency
-            if (currentSF < 12) {
-                reward -= 300.0;  // Extreme penalty
-                std::cout << "⚠️ EMERGENCY: PDR=" << pdr*100 << "% - MUST USE SF12!" << std::endl;
-            }
-        } else if (pdr < 0.3) {  // Poor PDR
-            if (currentSF < 10) {
-                reward -= 200.0;  // Very large penalty
-            }
-        } else if (pdr < 0.6) {  // Below target PDR
-            if (currentSF < 8) {
-                reward -= 100.0;  // Large penalty
-            }
-        }
-    }
-    
-    // **4. ENERGY EFFICIENCY (Secondary) - Penalize excessive TX power**
-    if (currentTP > 14.0 && snrMargin > 5.0) {
-        reward -= 50.0;  // Big penalty for using high power when not needed
-    } else if (currentTP > 11.0 && snrMargin > 10.0) {
-        reward -= 25.0;  // Penalty for moderate over-power
-    }
-    
-    // **5. PROGRESSIVE SF LEARNING BONUS**
-    static std::map<uint32_t, int> lastSF;
-    if (lastSF.find(nodeId) != lastSF.end()) {
-        int previousSF = lastSF[nodeId];
+    // ========================================
+    // Component 3: Energy efficiency (TERTIARY - 20%)
+    // Only reward efficiency if packet succeeded
+    // ========================================
+    if (packetSuccess) {
+        // Reward lower SF if packet succeeded (more efficient)
+        reward += (12 - currentSF) * 5.0;  // SF7 = +25, SF12 = 0
         
-        // Reward increasing SF when conditions are poor
-        if (!packetSuccess && currentSF > previousSF) {
-            reward += 75.0;  // Big bonus for learning to increase SF
-            std::cout << "✅ LEARNING: Increased SF " << previousSF << "→" << currentSF << " after failure" << std::endl;
-        }
-        
-        // Penalty for decreasing SF when still having failures
-        if (pdr < 0.5 && currentSF < previousSF) {
-            reward -= 100.0;  // Big penalty for wrong direction
+        // Reward lower TX power if packet succeeded
+        reward += (14 - currentTP) / 2.0;  // 14dBm = 0, 8dBm = +3
+    }
+    
+    // ========================================
+    // Component 4: SNR margin guidance (GUIDANCE)
+    // Help agent understand when to change SF
+    // ========================================
+    double requiredSNR[] = {-7.5, -10.0, -12.5, -15.0, -17.5, -20.0};  // SF7-SF12
+    int sfIdx = std::max(0, std::min(5, currentSF - 7));
+    double snrMargin = snr - requiredSNR[sfIdx];
+    
+    if (snr > -100.0) {  // Valid SNR measurement
+        if (snrMargin > 15.0 && currentSF > 7) {
+            // Too much margin - could use lower SF for efficiency
+            reward -= 15.0;
+        } else if (snrMargin < -3.0 && currentSF < 12) {
+            // Not enough margin - should use higher SF
+            reward -= 25.0;
+        } else if (snrMargin >= 3.0 && snrMargin <= 12.0) {
+            // Good margin - optimal operation
+            reward += 20.0;
         }
     }
-    lastSF[nodeId] = currentSF;
     
-    // **6. EXTREME ENERGY PENALTY**
-    if (energyConsumption > 0.5) {  // Very high energy (SF12 + high TP)
-        if (pdr < 0.7) {  // Still poor PDR despite high energy
-            reward -= 75.0;  // Penalty for inefficient high energy use
-        }
+    // ========================================
+    // Debug output (less verbose)
+    // ========================================
+    if (packetsSent % 50 == 0) {
+        std::cout << "📊 Node " << nodeId 
+                  << ": reward=" << std::fixed << std::setprecision(1) << reward
+                  << ", PDR=" << std::setprecision(1) << pdr*100 << "%"
+                  << ", SF=" << currentSF 
+                  << ", margin=" << std::setprecision(1) << snrMargin << "dB" << std::endl;
     }
     
     return reward;
@@ -937,65 +924,39 @@ void OnDataRateChange(std::string context, uint8_t oldValue, uint8_t newValue) {
 }
 
 /**
- * UNIFIED ENERGY CALCULATION METHOD
+ * FIXED ENERGY CALCULATION - NO SF PENALTY
  * 
- * This function calculates energy consumption using the same formula
- * for all ADR methods (No ADR, Classical ADR, and DDQN-PER ADR).
- * 
- * Energy Model:
- * 1. TX Energy: Includes exponential SF penalty for fair comparison
- *    - Base current: 20 mA
- *    - TX power component: (txPowerDbm - 2) * 2 mA per dBm above 2 dBm
- *    - SF penalty: 2^(SF-7) multiplier (accounts for longer air time)
- *    - TX time: Calculated using LoRaPhy::GetOnAirTime()
- * 2. RX Energy: Fixed energy for receive windows (Class A)
- *    - RX1 window: 10 mA * 1.0 s = 0.033 mJ
- *    - RX2 window: 10 mA * 1.0 s = 0.033 mJ (if RX1 fails)
- * 
- * Formula:
- *   Energy = (TX_Energy + RX_Energy)
- *   TX_Energy = (txCurrent * voltage * txTime * sfFactor) / 1000
- *   RX_Energy = (rxCurrent * voltage * rxTime) / 1000
- * 
- * This ensures fair energy comparison across all ADR methods.
+ * The SF penalty was causing 26x energy inflation for DDQN.
+ * Energy should be calculated the same way for all ADR methods.
+ * Higher SF naturally has longer airtime which is already accounted for.
  */
 double CalculateEnergyConsumption(int sf, double txPowerDbm, uint32_t payloadBytes) {
-    // TX current calculation (consistent with DDQN formula)
-    double baseCurrent = 20.0; // mA baseline
-    double txCurrent = baseCurrent + (txPowerDbm - 2.0) * 2.0; // TX power dependent
-    double voltage = 3.3; // Operating voltage (V)
+    // Standard LoRa energy calculation WITHOUT artificial SF penalty
+    double bandwidth = 125000.0;  // 125 kHz
+    double symbolRate = bandwidth / std::pow(2, sf);
     
-    // Calculate actual TX time using ns-3 LoRa model
-    LoraTxParameters txParams;
-    txParams.sf = sf;
-    txParams.headerDisabled = false;
-    txParams.codingRate = 1;
-    txParams.bandwidthHz = 125000;
-    txParams.nPreamble = 8;
-    txParams.crcEnabled = true;
-    txParams.lowDataRateOptimizationEnabled = (sf > 10);
+    // Preamble + header + payload symbols
+    double preambleSymbols = 8;
+    double headerSymbols = 4.25;
+    double payloadSymbols = 8 + std::max(0.0, 
+        std::ceil((8.0 * payloadBytes - 4.0 * sf + 28 + 16) / (4.0 * sf)) * 5);
     
-    Ptr<Packet> dummyPacket = Create<Packet>(payloadBytes);
-    Time txTime = LoraPhy::GetOnAirTime(dummyPacket, txParams);
+    double totalSymbols = preambleSymbols + headerSymbols + payloadSymbols;
+    double timeOnAir = totalSymbols / symbolRate;  // seconds
     
-    // SF penalty: Higher SF = exponentially longer air time
-    // This is critical for fair comparison between ADR methods
-    double sfFactor = std::pow(2.0, sf - 7);
+    // Current consumption based on TX power (realistic values)
+    // SX1276: ~120mA at 17dBm, ~85mA at 2dBm
+    double txCurrent_mA = 85.0 + (txPowerDbm - 2.0) * 2.3;  // Linear approximation
     
-    // TX energy with SF penalty
-    double txEnergyMj = (txCurrent * voltage * txTime.GetSeconds() * sfFactor) / 1000.0;
+    // Energy = Power × Time = (Voltage × Current) × Time
+    // Assuming 3.3V supply
+    double voltage = 3.3;
+    double energy_mJ = voltage * txCurrent_mA * timeOnAir;  // mJ
     
-    // RX energy for Class A device (two receive windows)
-    // RX1: Opens 1s after TX end
-    // RX2: Opens 2s after TX end (if RX1 fails)
-    double rxCurrent = 10.0; // mA (typical LoRa RX current)
-    double rxWindowDuration = 1.0; // seconds per window
-    double rxEnergyMj = (rxCurrent * voltage * rxWindowDuration) / 1000.0;
+    // Add small RX window energy (fixed overhead)
+    double rxEnergy_mJ = 0.033;  // ~10mA for 1ms
     
-    // Total energy = TX + RX windows
-    double totalEnergyMj = txEnergyMj + rxEnergyMj;
-    
-    return totalEnergyMj;
+    return energy_mJ + rxEnergy_mJ;
 }
 
 /**
@@ -1274,18 +1235,20 @@ void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess) {
     if (ddqnAgents.find(nodeId) == ddqnAgents.end()) return;
     
     DeviceMetrics& metrics = deviceMetrics[nodeId];
-    metrics.packetsSent++;
-    if (packetSuccess) {
-        metrics.packetsReceived++;
-    }
+    // ✅ FIX: Don't increment here - already done in UpdateDeviceMetrics
+    // metrics.packetsSent++;
+    // if (packetSuccess) {
+    //     metrics.packetsReceived++;
+    // }
     
-    double currentPDR = (double)metrics.packetsReceived / metrics.packetsSent;
+    double currentPDR = (double)metrics.packetsReceived / std::max(1u, metrics.packetsSent);
     uint8_t currentSFVal = currentSF[nodeId];
     double currentTPVal = currentTP[nodeId];
     
-    double energyThisPacket = CalculateEnergyConsumption(currentSFVal, currentTPVal, 20);
-    metrics.totalEnergyConsumed += energyThisPacket;
-    double avgEnergyPerPacket = metrics.totalEnergyConsumed / metrics.packetsSent;
+    // ✅ FIX: Don't add energy here - already counted in packet record!
+    // double energyThisPacket = CalculateEnergyConsumption(currentSFVal, currentTPVal, 20);
+    // metrics.totalEnergyConsumed += energyThisPacket;
+    double avgEnergyPerPacket = metrics.totalEnergyConsumed / std::max(1u, metrics.packetsSent);
     
     // **GET DISTANCE FOR ADVANCED REWARD**
     Vector nodePos = nodePositions[nodeId];
@@ -1297,7 +1260,7 @@ void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess) {
         std::max(0.0, std::min(1.0, (snr + 25.0) / 50.0)),      // Normalized SNR
         (currentSFVal - 7.0) / 5.0,                             // Normalized SF (most important)
         std::min(1.0, std::max(0.0, currentPDR)),               // PDR (0-1, clamped)
-        (currentTPVal - 2.0) / 15.0,                            // Normalized TP (least important)
+        (currentTPVal - 8.0) / 6.0,                             // ✅ FIX: Normalized TP for 8-14 dBm range
         std::min(1.0, avgEnergyPerPacket / 1.0),                // Energy feedback
         std::min(1.0, distance / 4000.0)                       // Distance context
     };
@@ -1344,21 +1307,19 @@ void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess) {
         // Convert SF to DataRate (SF12=DR0, SF11=DR1, ..., SF7=DR5)
         uint8_t newDataRate = 12 - newSF;
         
-        // Apply DataRate directly to MAC layer (same mechanism as classical ADR)
-        Simulator::Schedule(Seconds(0.1), [nodeId, newDataRate, newSF]() {
-            if (nodeId < endDevicesNetDevices.size()) {
-                Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
-                    endDevicesNetDevices[nodeId]->GetMac());
-                if (edMac) {
-                    // Use the same mechanism as classical ADR - set data rate directly
-                    edMac->SetDataRate(newDataRate);
-                    
-                    std::cout << "✅ DDQN Applied SF=" << (int)newSF 
-                              << " (DR=" << (int)newDataRate 
-                              << ") to device " << nodeId << std::endl;
-                }
+        // ✅ FIX: Apply immediately, not after delay
+        if (nodeId < endDevicesNetDevices.size()) {
+            Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
+                endDevicesNetDevices[nodeId]->GetMac());
+            if (edMac) {
+                // Use the same mechanism as classical ADR - set data rate directly
+                edMac->SetDataRate(newDataRate);
+                
+                std::cout << "✅ DDQN Applied SF=" << (int)newSF 
+                          << " (DR=" << (int)newDataRate 
+                          << ") to device " << nodeId << std::endl;
             }
-        });
+        }
     }
     if (metrics.packetsSent >= 10 && currentPDR < 0.3) {
         std::cout << "🚨 POOR PERFORMANCE DETECTED - Node " << nodeId 
@@ -1470,6 +1431,28 @@ void UpdateClassicalADR(uint32_t nodeId, double snr, bool packetSuccess) {
  */
 void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSeconds, 
                   double radius, const std::string& csvFileName, ADRMethod adrMethod, uint32_t nWifiInterferers);
+
+/**
+ * Get optimal initial SF based on distance (heuristic warm-start)
+ * This prevents DDQN from starting with random/bad parameters
+ */
+uint8_t getInitialSFForDistance(double distance) {
+    if (distance < 300) return 7;
+    if (distance < 500) return 8;
+    if (distance < 800) return 9;
+    if (distance < 1200) return 10;
+    if (distance < 1600) return 11;
+    return 12;
+}
+
+/**
+ * Get optimal initial TX power based on distance
+ */
+double getInitialTPForDistance(double distance) {
+    if (distance < 400) return 8;
+    if (distance < 800) return 11;
+    return 14;
+}
 
 /**
  * Write environment visualization CSV for plotting
@@ -1879,19 +1862,47 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
     }
     
     if (adrMethod == ADRMethod::DDQN) {
+        std::cout << "\n🎯 Initializing DDQN agents with distance-based warm start..." << std::endl;
         for (uint32_t i = 0; i < nDevices; ++i) {
             uint32_t nodeId = endDevices.Get(i)->GetId();
-                    ddqnAgents[nodeId] = std::make_unique<DDQNPERADRAgent>(
-             0.005,   // Lower learning rate for more stable learning
-            0.95,    // Very high initial exploration
-            0.9995,  // Much slower epsilon decay
-            0.2,     // Higher minimum exploration
-            0.95,    // Discount factor
-            100,     // Less frequent target updates
-            1.0,     // PDR weight (will be handled in new reward function)
-            0.1     // Energy weight
-        );
+            
+            // Calculate distance from gateway for warm start
+            Vector pos = nodePositions[nodeId];
+            double distance = std::sqrt(pos.x * pos.x + pos.y * pos.y);
+            
+            // Initialize with distance-based heuristic (warm start)
+            uint8_t initialSF = getInitialSFForDistance(distance);
+            double initialTP = getInitialTPForDistance(distance);
+            
+            currentSF[nodeId] = initialSF;
+            currentTP[nodeId] = initialTP;
+            nodeTxPowers[nodeId] = initialTP;
+            
+            // Apply to device immediately
+            Ptr<EndDeviceLorawanMac> mac = DynamicCast<EndDeviceLorawanMac>(
+                endDevicesNetDevices[i]->GetMac());
+            if (mac) {
+                mac->SetDataRate(12 - initialSF);  // DR = 12 - SF
+                mac->SetTransmissionPowerDbm(initialTP);
+            }
+            
+            // Create agent with moderate exploration (not 99%!)
+            ddqnAgents[nodeId] = std::make_unique<DDQNPERADRAgent>(
+                0.01,    // learningRate
+                0.5,     // epsilon - start at 50% exploration (warm start means less exploration needed)
+                0.998,   // epsilonDecay - slower decay
+                0.1,     // minEpsilon - lower minimum
+                0.9,     // gamma - discount factor
+                50,      // targetUpdateFreq - more frequent updates
+                1.0,     // pdrWeight
+                0.2      // energyWeight
+            );
+            
+            std::cout << "  Device " << nodeId << ": distance=" << std::fixed << std::setprecision(0) 
+                      << distance << "m, initialSF=" << (int)initialSF 
+                      << ", initialTP=" << initialTP << "dBm" << std::endl;
         }
+        std::cout << std::endl;
     }
     
     std::cout << "\n🔧 Configuring " << nDevices << " devices with period " << appPeriodSeconds << "s" << std::endl;
