@@ -832,8 +832,9 @@ public:
             // Actions 0-5: Pure SF change (SF 7-12)
             result.newSF = 7 + action;
         } else if (action < 12) {
-            // Actions 6-11: Pure TP change (2, 5, 8, 11, 14, 17 dBm)
-            int tpLevels[] = {2, 5, 8, 11, 14, 17};
+            // Actions 6-11: Pure TP change (8, 9, 11, 13, 14, 17 dBm)
+            // NOTE: Using minimum 8 dBm to avoid channel power violations
+            int tpLevels[] = {8, 9, 11, 13, 14, 17};
             result.newTP = tpLevels[action - 6];
         } else if (action < 20) {
             // Actions 12-19: Channel change (channels 0-7)
@@ -1131,6 +1132,25 @@ public:
             return comboDist(rng);
         }
         
+        // ========================================
+        // NEW: High SNR + High SF + Low PDR = Try Lower SF
+        // ========================================
+        double lastSnr = history.getLastSnr();
+        uint8_t currentSFFromState = (uint8_t)(state[8] * 5.0 + 7.0);  // Decode from state
+        
+        if (lastSnr > 20.0 && currentSFFromState > 8 && 
+            history.getRecentPdr() > 0.2 && history.getRecentPdr() < 0.6) {
+            // Good SNR, using high SF, mediocre PDR - try reducing SF
+            if (dist(rng) < 0.4) {  // 40% chance to explore lower SF
+                // Actions 0-2 correspond to SF 7, 8, 9 (keep SF low)
+                std::uniform_int_distribution<int> lowSfDist(0, 2);
+                int action = lowSfDist(rng);
+                std::cout << "🔬 Exploring lower SF for high-SNR device (Node " << nodeId 
+                          << ", SNR=" << lastSnr << "dB, CurrentSF=" << (int)currentSFFromState << ")" << std::endl;
+                return action;
+            }
+        }
+        
         // Epsilon-greedy with curiosity bonus
         if (dist(rng) < epsilon) {
             // Smart exploration
@@ -1307,6 +1327,53 @@ double calculateInterferenceAwareReward(
     // ========================================
     if (timeSinceLastSuccess > 60.0 && !packetSuccess) {
         reward -= 30.0;
+    }
+    
+    // ========================================
+    // COMPONENT 6: SNR-SF Mismatch Penalty (NEW)
+    // Strongly penalize high SF when SNR is excellent
+    // ========================================
+    static const double REQUIRED_SNR[] = {-7.5, -10.0, -12.5, -15.0, -17.5, -20.0}; // SF7-SF12
+    
+    if (rxSnr > 15.0) {  // Good link quality
+        // Calculate optimal SF for this SNR (with 10dB margin)
+        uint8_t optimalSF = 7;
+        for (int sf = 7; sf <= 12; sf++) {
+            double required = REQUIRED_SNR[sf - 7];
+            if (rxSnr > required + 10.0) {
+                optimalSF = sf;
+                break;
+            }
+        }
+        
+        // Penalize SF that's too high for the SNR
+        int sfExcess = (int)currentSF - (int)optimalSF;
+        if (sfExcess > 1) {
+            double penalty = sfExcess * 20.0;  // 20 points per unnecessary SF level
+            reward -= penalty;
+            
+            if (sfExcess >= 2) {
+                std::cout << "⚠️ SNR-SF MISMATCH: Node " << nodeId
+                          << " has SNR=" << rxSnr << "dB but using SF" << (int)currentSF 
+                          << " (optimal=" << (int)optimalSF << "), penalty=" << penalty << std::endl;
+            }
+        }
+        
+        // Bonus for using appropriate SF with good SNR
+        if (sfExcess <= 0 && packetSuccess) {
+            reward += 15.0;  // Reward efficient SF choice
+        }
+    }
+    
+    // ========================================
+    // COMPONENT 7: Collision Detection from Airtime (NEW)
+    // High SF + good SNR + packet loss = likely collision from long airtime
+    // ========================================
+    if (!packetSuccess && currentSF >= 9 && rxSnr > 10.0) {
+        // Lost packet despite good SNR and high SF = likely collision due to long airtime
+        reward -= 35.0;
+        std::cout << "💥 Likely collision from long airtime: Node " << nodeId
+                  << ", SF=" << (int)currentSF << ", SNR=" << rxSnr << "dB" << std::endl;
     }
     
     return reward;
@@ -2097,15 +2164,17 @@ void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess) {
         }
     }
     if (newTP != -1) {
-        currentTP[nodeId] = newTP;
-        nodeTxPowers[nodeId] = newTP;
+        // Enforce minimum TX power of 8 dBm to avoid channel power violations
+        double safeTp = std::max(8.0, std::min(17.0, (double)newTP));
+        currentTP[nodeId] = safeTp;
+        nodeTxPowers[nodeId] = safeTp;
         
         if (nodeId < endDevicesNetDevices.size()) {
             Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
                 endDevicesNetDevices[nodeId]->GetMac());
             if (edMac) {
-                edMac->SetTransmissionPowerDbm(newTP);
-                std::cout << "✅ Applied TP=" << newTP << " dBm to device " << nodeId << " (via MAC)" << std::endl;
+                edMac->SetTransmissionPowerDbm(safeTp);
+                std::cout << "✅ Applied TP=" << safeTp << " dBm to device " << nodeId << " (via MAC)" << std::endl;
             }
         }
     }
@@ -2194,6 +2263,44 @@ void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double
         action, currentSFVal, currentTPVal, currentChannel
     );
     
+    // ========================================
+    // SNR-BASED SF FLOOR (CRITICAL FIX)
+    // Prevent DDQN from choosing unnecessarily high SF when SNR is excellent
+    // ========================================
+    double lastSnr = history.getLastSnr();
+    
+    if (lastSnr > -100.0) {  // Valid SNR measurement
+        // Calculate optimal SF based on SNR (with 10dB margin for reliability)
+        static const double REQUIRED_SNR[] = {-7.5, -10.0, -12.5, -15.0, -17.5, -20.0};
+        uint8_t snrOptimalSF = 12;  // Start with highest
+        
+        for (int sf = 7; sf <= 12; sf++) {
+            if (lastSnr > REQUIRED_SNR[sf - 7] + 10.0) {
+                snrOptimalSF = sf;
+                break;
+            }
+        }
+        
+        // Apply ceiling: don't let DDQN choose SF more than 1 above optimal
+        uint8_t sfCeiling = std::min((uint8_t)12, (uint8_t)(snrOptimalSF + 1));
+        
+        if (actionResult.newSF != -1 && actionResult.newSF > sfCeiling) {
+            std::cout << "🎯 SNR-based SF cap: " << (int)actionResult.newSF 
+                      << " → " << (int)sfCeiling
+                      << " (SNR=" << lastSnr << "dB, optimal=" << (int)snrOptimalSF << ")" 
+                      << " (Node " << nodeId << ")" << std::endl;
+            actionResult.newSF = sfCeiling;
+        }
+        
+        // AGGRESSIVE FIX: If high SNR but high SF and poor PDR, force SF reduction
+        if (lastSnr > 25.0 && currentSFVal > 8 && history.getRecentPdr() < 0.5) {
+            std::cout << "🔄 FORCING SF reduction: SNR=" << lastSnr << "dB but SF=" << (int)currentSFVal 
+                      << " with PDR=" << (history.getRecentPdr()*100) << "%" 
+                      << " (Node " << nodeId << ")" << std::endl;
+            actionResult.newSF = std::max((uint8_t)7, snrOptimalSF);
+        }
+    }
+    
     // Apply SF change
     if (actionResult.newSF != -1 && actionResult.newSF != currentSFVal) {
         currentSF[nodeId] = actionResult.newSF;
@@ -2210,17 +2317,19 @@ void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double
         }
     }
     
-    // Apply TP change
+    // Apply TP change (with safety bounds)
     if (actionResult.newTP != -1 && std::abs(actionResult.newTP - currentTPVal) > 0.5) {
-        currentTP[nodeId] = actionResult.newTP;
-        nodeTxPowers[nodeId] = actionResult.newTP;
+        // Enforce minimum TX power of 8 dBm to avoid channel power violations
+        double safeTp = std::max(8.0, std::min(17.0, (double)actionResult.newTP));
+        currentTP[nodeId] = safeTp;
+        nodeTxPowers[nodeId] = safeTp;
         
         if (nodeId < endDevicesNetDevices.size()) {
             Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
                 endDevicesNetDevices[nodeId]->GetMac());
             if (edMac) {
-                edMac->SetTransmissionPowerDbm(actionResult.newTP);
-                std::cout << "✅ OptDDQN TP=" << actionResult.newTP 
+                edMac->SetTransmissionPowerDbm(safeTp);
+                std::cout << "✅ OptDDQN TP=" << safeTp 
                           << "dBm (Node " << nodeId << ")" << std::endl;
             }
         }
