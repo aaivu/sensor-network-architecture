@@ -1787,12 +1787,16 @@ double CalculateEnergyConsumption(int sf, double txPowerDbm, uint32_t payloadByt
 // **PRE-TRANSMISSION ADR DECISIONS**
 // This function is called BEFORE each packet transmission to apply ADR decisions
 void ApplyADRDecision(uint32_t nodeId) {
-    if (nodeId >= endDevicesNetDevices.size()) return;
+    // ✅ FIX: Use deviceIndex to access endDevicesNetDevices array
+    if (nodeIdToDeviceIndex.find(nodeId) == nodeIdToDeviceIndex.end()) return;
+    
+    uint32_t deviceIndex = nodeIdToDeviceIndex[nodeId];
+    if (deviceIndex >= endDevicesNetDevices.size()) return;
     
     Ptr<EndDeviceLoraPhy> edPhy = DynamicCast<EndDeviceLoraPhy>(
-        endDevicesNetDevices[nodeId]->GetPhy());
+        endDevicesNetDevices[deviceIndex]->GetPhy());
     Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
-        endDevicesNetDevices[nodeId]->GetMac());
+        endDevicesNetDevices[deviceIndex]->GetMac());
     
     if (!edPhy || !edMac) return;
     
@@ -1815,7 +1819,7 @@ void ApplyADRDecision(uint32_t nodeId) {
                 
                 // Map action to SF and TP (simplified mapping)
                 uint8_t newSF = 7 + (action % 6);  // SF 7-12
-                double newTP = 5.0 + (action / 6) * 2.0;  // Power levels
+                double newTP = std::max(8.0, std::min(14.0, 5.0 + (action / 6) * 2.0));  // EU868 max 14 dBm
                 
                 if (newSF != edPhy->GetSpreadingFactor() || 
                     std::abs(newTP - edMac->GetTransmissionPowerDbm()) > 0.1) {
@@ -1827,7 +1831,7 @@ void ApplyADRDecision(uint32_t nodeId) {
                     currentSF[nodeId] = newSF;
                     currentTP[nodeId] = newTP;
                     
-                    std::cout << "🤖 DDQN ADR: Device " << nodeId 
+                    std::cout << "🤖 DDQN ADR: Node " << nodeId << " (device " << deviceIndex << ")"
                               << " SF=" << (int)newSF << ", TP=" << newTP << " dBm" << std::endl;
                 }
             }
@@ -2139,17 +2143,20 @@ void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess) {
         // Convert SF to DataRate (SF12=DR0, SF11=DR1, ..., SF7=DR5)
         uint8_t newDataRate = 12 - newSF;
         
-        // ✅ FIX: Apply immediately, not after delay
-        if (nodeId < endDevicesNetDevices.size()) {
-            Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
-                endDevicesNetDevices[nodeId]->GetMac());
-            if (edMac) {
-                // Use the same mechanism as classical ADR - set data rate directly
-                edMac->SetDataRate(newDataRate);
-                
-                std::cout << "✅ DDQN Applied SF=" << (int)newSF 
-                          << " (DR=" << (int)newDataRate 
-                          << ") to device " << nodeId << std::endl;
+        // ✅ FIX: Use deviceIndex to access endDevicesNetDevices array
+        if (nodeIdToDeviceIndex.find(nodeId) != nodeIdToDeviceIndex.end()) {
+            uint32_t deviceIndex = nodeIdToDeviceIndex[nodeId];
+            if (deviceIndex < endDevicesNetDevices.size()) {
+                Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
+                    endDevicesNetDevices[deviceIndex]->GetMac());
+                if (edMac) {
+                    // Use the same mechanism as classical ADR - set data rate directly
+                    edMac->SetDataRate(newDataRate);
+                    
+                    std::cout << "✅ DDQN Applied SF=" << (int)newSF 
+                              << " (DR=" << (int)newDataRate 
+                              << ") to node " << nodeId << " (device " << deviceIndex << ")" << std::endl;
+                }
             }
         }
     }
@@ -2165,16 +2172,20 @@ void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess) {
     }
     if (newTP != -1) {
         // Enforce minimum TX power of 8 dBm to avoid channel power violations
-        double safeTp = std::max(8.0, std::min(17.0, (double)newTP));
+        double safeTp = std::max(8.0, std::min(14.0, (double)newTP));  // EU868 max 14 dBm
         currentTP[nodeId] = safeTp;
         nodeTxPowers[nodeId] = safeTp;
         
-        if (nodeId < endDevicesNetDevices.size()) {
-            Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
-                endDevicesNetDevices[nodeId]->GetMac());
-            if (edMac) {
-                edMac->SetTransmissionPowerDbm(safeTp);
-                std::cout << "✅ Applied TP=" << safeTp << " dBm to device " << nodeId << " (via MAC)" << std::endl;
+        // ✅ FIX: Use deviceIndex to access endDevicesNetDevices array
+        if (nodeIdToDeviceIndex.find(nodeId) != nodeIdToDeviceIndex.end()) {
+            uint32_t deviceIndex = nodeIdToDeviceIndex[nodeId];
+            if (deviceIndex < endDevicesNetDevices.size()) {
+                Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
+                    endDevicesNetDevices[deviceIndex]->GetMac());
+                if (edMac) {
+                    edMac->SetTransmissionPowerDbm(safeTp);
+                    std::cout << "✅ Applied TP=" << safeTp << " dBm to node " << nodeId << " (device " << deviceIndex << ")" << std::endl;
+                }
             }
         }
     }
@@ -2305,14 +2316,18 @@ void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double
     if (actionResult.newSF != -1 && actionResult.newSF != currentSFVal) {
         currentSF[nodeId] = actionResult.newSF;
         
-        if (nodeId < endDevicesNetDevices.size()) {
-            Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
-                endDevicesNetDevices[nodeId]->GetMac());
-            if (edMac) {
-                uint8_t newDataRate = 12 - actionResult.newSF;
-                edMac->SetDataRate(newDataRate);
-                std::cout << "✅ OptDDQN SF=" << actionResult.newSF 
-                          << " (Node " << nodeId << ")" << std::endl;
+        // ✅ FIX: Use deviceIndex to access endDevicesNetDevices array
+        if (nodeIdToDeviceIndex.find(nodeId) != nodeIdToDeviceIndex.end()) {
+            uint32_t deviceIndex = nodeIdToDeviceIndex[nodeId];
+            if (deviceIndex < endDevicesNetDevices.size()) {
+                Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
+                    endDevicesNetDevices[deviceIndex]->GetMac());
+                if (edMac) {
+                    uint8_t newDataRate = 12 - actionResult.newSF;
+                    edMac->SetDataRate(newDataRate);
+                    std::cout << "✅ OptDDQN SF=" << (int)actionResult.newSF 
+                              << " (Node " << nodeId << ", device " << deviceIndex << ")" << std::endl;
+                }
             }
         }
     }
@@ -2320,17 +2335,21 @@ void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double
     // Apply TP change (with safety bounds)
     if (actionResult.newTP != -1 && std::abs(actionResult.newTP - currentTPVal) > 0.5) {
         // Enforce minimum TX power of 8 dBm to avoid channel power violations
-        double safeTp = std::max(8.0, std::min(17.0, (double)actionResult.newTP));
+        double safeTp = std::max(8.0, std::min(14.0, (double)actionResult.newTP));  // EU868 max 14 dBm
         currentTP[nodeId] = safeTp;
         nodeTxPowers[nodeId] = safeTp;
         
-        if (nodeId < endDevicesNetDevices.size()) {
-            Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
-                endDevicesNetDevices[nodeId]->GetMac());
-            if (edMac) {
-                edMac->SetTransmissionPowerDbm(safeTp);
-                std::cout << "✅ OptDDQN TP=" << safeTp 
-                          << "dBm (Node " << nodeId << ")" << std::endl;
+        // ✅ FIX: Use deviceIndex to access endDevicesNetDevices array
+        if (nodeIdToDeviceIndex.find(nodeId) != nodeIdToDeviceIndex.end()) {
+            uint32_t deviceIndex = nodeIdToDeviceIndex[nodeId];
+            if (deviceIndex < endDevicesNetDevices.size()) {
+                Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
+                    endDevicesNetDevices[deviceIndex]->GetMac());
+                if (edMac) {
+                    edMac->SetTransmissionPowerDbm(safeTp);
+                    std::cout << "✅ OptDDQN TP=" << safeTp 
+                              << "dBm (Node " << nodeId << ", device " << deviceIndex << ")" << std::endl;
+                }
             }
         }
     }
@@ -2420,27 +2439,32 @@ void UpdateClassicalADR(uint32_t nodeId, double snr, bool packetSuccess) {
                       << " → " << currentTP[nodeId] << " dBm (power save)" << std::endl;
         } else if (snrMargin < -SNR_MARGIN - 2.0 && currentTP[nodeId] < 17.0) {
             // Very poor link quality - increase power
-            currentTP[nodeId] = std::min(17.0, currentTP[nodeId] + 2.0);
+            currentTP[nodeId] = std::min(14.0, currentTP[nodeId] + 2.0);  // EU868 max 14 dBm
             std::cout << "⚡ Classical ADR: Node " << nodeId << " TP " << originalTP 
                       << " → " << currentTP[nodeId] << " dBm (boost signal)" << std::endl;
         }
         
         // **3. APPLY CHANGES IMMEDIATELY VIA MAC LAYER**
         if (originalSF != currentSF[nodeId] || std::abs(originalTP - currentTP[nodeId]) > 0.1) {
-            if (nodeId < endDevicesNetDevices.size()) {
-                Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
-                    endDevicesNetDevices[nodeId]->GetMac());
-                Ptr<EndDeviceLoraPhy> edPhy = DynamicCast<EndDeviceLoraPhy>(
-                    endDevicesNetDevices[nodeId]->GetPhy());
-                if (edMac && edPhy) {
-                    // Apply SF directly to PHY layer for immediate effect
-                    edPhy->SetSpreadingFactor(currentSF[nodeId]);
-                    
-                    // Apply TX power directly to MAC layer  
-                    edMac->SetTransmissionPowerDbm(currentTP[nodeId]);
-                    
-                    std::cout << "✅ Classical ADR Applied IMMEDIATELY: SF=" << (int)currentSF[nodeId] 
-                              << ", TP=" << currentTP[nodeId] << "dBm to device " << nodeId << std::endl;
+            // ✅ FIX: Use deviceIndex to access endDevicesNetDevices array
+            if (nodeIdToDeviceIndex.find(nodeId) != nodeIdToDeviceIndex.end()) {
+                uint32_t deviceIndex = nodeIdToDeviceIndex[nodeId];
+                if (deviceIndex < endDevicesNetDevices.size()) {
+                    Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
+                        endDevicesNetDevices[deviceIndex]->GetMac());
+                    Ptr<EndDeviceLoraPhy> edPhy = DynamicCast<EndDeviceLoraPhy>(
+                        endDevicesNetDevices[deviceIndex]->GetPhy());
+                    if (edMac && edPhy) {
+                        // Apply SF directly to PHY layer for immediate effect
+                        edPhy->SetSpreadingFactor(currentSF[nodeId]);
+                        
+                        // Apply TX power directly to MAC layer  
+                        edMac->SetTransmissionPowerDbm(currentTP[nodeId]);
+                        
+                        std::cout << "✅ Classical ADR Applied IMMEDIATELY: SF=" << (int)currentSF[nodeId] 
+                                  << ", TP=" << currentTP[nodeId] << "dBm to node " << nodeId 
+                                  << " (device " << deviceIndex << ")" << std::endl;
+                    }
                 }
             }
         }
@@ -2623,6 +2647,11 @@ int main(int argc, char* argv[]) {
     enableEnvironmentalModeling = environmentalModeling;
     
     LogComponentEnable("AdvancedDDQNPERADRExample", LOG_LEVEL_INFO);
+    
+    // **CLEANUP: Remove old dataset files before any new simulations**
+    std::cout << "🧹 Cleaning up old lorawan_datasets folder..." << std::endl;
+    system("rm -rf lorawan_datasets");
+    std::cout << "✅ Old datasets removed" << std::endl;
     
     std::cout << "\n=== ENHANCED ns-3 LoRaWAN Simulation ===" << std::endl;
     std::cout << "Environmental modeling: " << (enableEnvironmentalModeling ? "ENABLED" : "DISABLED") << std::endl;
