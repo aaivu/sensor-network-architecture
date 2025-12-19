@@ -90,6 +90,9 @@ public:
     void SetNodePositionsFile(const std::string& filePath);
     void SetObstaclesFile(const std::string& filePath);
     
+    // Set output directory for dataset files
+    void SetOutputDirectory(const std::string& dirPath);
+    
     void Run();
     
     // Getters for callback access

@@ -1,4 +1,6 @@
 import pandas as pd
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.patches import Circle, Rectangle
@@ -57,11 +59,18 @@ def visualize_lorawan_environment(env_csv_path, output_dir="environment_plots"):
                   s=120, c='red', marker='s', alpha=0.7, 
                   edgecolors='darkred', linewidth=2, label='WiFi Interferers', zorder=5)
         
-        # Add WiFi interference circles
+        # Add WiFi interference circles and labels
         for _, wifi in wifi_nodes.iterrows():
             circle = Circle((wifi['x'], wifi['y']), 100, 
                           fill=False, color='red', linestyle='--', alpha=0.3, linewidth=1)
             ax.add_patch(circle)
+            
+            # Add WiFi labels
+            ax.annotate(f"W{wifi['id'].split('_')[1]}", 
+                       (wifi['x'], wifi['y']), 
+                       xytext=(5, 5), textcoords='offset points',
+                       fontsize=7, color='darkred', weight='bold',
+                       bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8, edgecolor='red'))
     
     # Plot end devices
     devices = df[df['type'] == 'end_device']
@@ -77,12 +86,13 @@ def visualize_lorawan_environment(env_csv_path, output_dir="environment_plots"):
         cbar = plt.colorbar(scatter, ax=ax, shrink=0.8)
         cbar.set_label('TX Power (dBm)', rotation=270, labelpad=15)
         
-        # Add device IDs
+        # Add device IDs with better visibility
         for _, device in devices.iterrows():
             ax.annotate(f"D{device['id']}", 
                        (device['x'], device['y']), 
-                       xytext=(5, 5), textcoords='offset points',
-                       fontsize=8, color='black', weight='bold')
+                       xytext=(8, 8), textcoords='offset points',
+                       fontsize=9, color='black', weight='bold',
+                       bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8, edgecolor='none'))
     
     # Plot gateway
     gateway = df[df['type'] == 'gateway']
@@ -99,7 +109,8 @@ def visualize_lorawan_environment(env_csv_path, output_dir="environment_plots"):
             ax.add_patch(circle)
         
         ax.text(gw_x, gw_y-50, 'GATEWAY', ha='center', va='top',
-                fontsize=12, color='darkorange', weight='bold')
+                fontsize=12, color='darkorange', weight='bold',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', alpha=0.9, edgecolor='orange'))
     
     # Customize plot
     ax.set_xlim(x_min, x_max)
@@ -129,7 +140,7 @@ def visualize_lorawan_environment(env_csv_path, output_dir="environment_plots"):
     plt.savefig(output_path, dpi=300, bbox_inches='tight', facecolor='white')
     print(f"Environment map saved to: {output_path}")
     
-    plt.show()
+    plt.close()  # Close figure to free memory
     
     return fig, ax
 
@@ -202,6 +213,13 @@ def create_interference_heatmap(env_csv_path, output_dir="environment_plots"):
         ax.scatter(devices['x'], devices['y'], s=60, c='yellow', 
                   marker='o', edgecolors='black', linewidth=1, zorder=5)
         
+        # Add device labels for all devices
+        for _, device in devices.iterrows():
+            ax.annotate(f"D{device['id']}", 
+                       (device['x'], device['y']), 
+                       xytext=(5, 5), textcoords='offset points',
+                       fontsize=8, color='black', weight='bold')
+        
         # Plot gateway
         gateway = df[df['type'] == 'gateway']
         ax.scatter(gateway['x'], gateway['y'], s=200, c='gold', marker='*',
@@ -211,6 +229,14 @@ def create_interference_heatmap(env_csv_path, output_dir="environment_plots"):
         wifi_nodes = df[df['type'] == 'wifi_interferer']
         ax.scatter(wifi_nodes['x'], wifi_nodes['y'], s=80, c='red', 
                   marker='s', edgecolors='darkred', linewidth=1, zorder=5)
+        
+        # Add WiFi labels
+        for _, wifi in wifi_nodes.iterrows():
+            ax.annotate(f"W{wifi['id'].split('_')[1]}", 
+                       (wifi['x'], wifi['y']), 
+                       xytext=(5, 5), textcoords='offset points',
+                       fontsize=7, color='darkred', weight='bold',
+                       bbox=dict(boxstyle='round,pad=0.1', facecolor='white', alpha=0.7, edgecolor='none'))
         
         ax.set_xlabel('X Position (meters)')
         ax.set_ylabel('Y Position (meters)')
@@ -222,7 +248,7 @@ def create_interference_heatmap(env_csv_path, output_dir="environment_plots"):
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
     print(f"Interference heatmap saved to: {output_path}")
     
-    plt.show()
+    plt.close()  # Close figure to free memory
 
 def visualize_all_environments():
     """

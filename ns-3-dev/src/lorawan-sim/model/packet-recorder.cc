@@ -10,7 +10,8 @@
 namespace ns3 {
 namespace lorawan {
 
-PacketRecorder::PacketRecorder() {
+PacketRecorder::PacketRecorder() 
+    : m_outputDir("lorawan_datasets") {
 }
 
 PacketRecorder::~PacketRecorder() {
@@ -76,8 +77,12 @@ const std::vector<PacketRecord>& PacketRecorder::GetCompletedPackets() const {
     return m_completedPackets;
 }
 
+void PacketRecorder::SetOutputDirectory(const std::string& dirPath) {
+    m_outputDir = dirPath;
+}
+
 void PacketRecorder::WriteCSVOutput(const std::string& filename) const {
-    std::string folderName = "lorawan_datasets";
+    std::string folderName = m_outputDir;
     system(("mkdir -p " + folderName).c_str());
     
     std::string baseFilename = filename;
@@ -143,7 +148,7 @@ void PacketRecorder::WriteCSVOutput(const std::string& filename) const {
     std::cout << "\n=== REALISTIC ns-3 LoRaWAN SIMULATION RESULTS ===" << std::endl;
     std::cout << "Total packets transmitted: " << totalPackets << std::endl;
     std::cout << "Successfully received: " << receivedPackets << " (" << successRate << "%)" << std::endl;
-    std::cout << "Per-device datasets saved to: lorawan_datasets/ folder" << std::endl;
+    std::cout << "Per-device datasets saved to: " << m_outputDir << "/ folder" << std::endl;
 }
 
 void PacketRecorder::Clear() {
@@ -153,9 +158,12 @@ void PacketRecorder::Clear() {
 }
 
 double CalculateEnergyConsumption(int sf, double txPowerDbm, uint32_t payloadBytes) {
-    double txCurrent = 120.0;
-    double powerCurrent = (txPowerDbm - 2.0) * 3.2;
+    // TX current calculation (consistent with unified formula)
+    double baseCurrent = 20.0; // mA baseline
+    double txCurrent = baseCurrent + (txPowerDbm - 2.0) * 2.0; // TX power dependent
+    double voltage = 3.3; // Operating voltage (V)
     
+    // Calculate actual TX time using ns-3 LoRa model
     LoraTxParameters txParams;
     txParams.sf = sf;
     txParams.headerDisabled = false;
@@ -168,10 +176,24 @@ double CalculateEnergyConsumption(int sf, double txPowerDbm, uint32_t payloadByt
     Ptr<Packet> dummyPacket = Create<Packet>(payloadBytes);
     Time txTime = LoraPhy::GetOnAirTime(dummyPacket, txParams);
     
-    double totalCurrent = txCurrent + powerCurrent;
-    double energyMj = (totalCurrent * 3.3 * txTime.GetSeconds()) / 1000.0;
+    // SF penalty: Higher SF = exponentially longer air time
+    // This is critical for fair comparison between ADR methods
+    double sfFactor = std::pow(2.0, sf - 7);
     
-    return energyMj;
+    // TX energy with SF penalty
+    double txEnergyMj = (txCurrent * voltage * txTime.GetSeconds() * sfFactor) / 1000.0;
+    
+    // RX energy for Class A device (two receive windows)
+    // RX1: Opens 1s after TX end
+    // RX2: Opens 2s after TX end (if RX1 fails)
+    double rxCurrent = 10.0; // mA (typical LoRa RX current)
+    double rxWindowDuration = 1.0; // seconds per window
+    double rxEnergyMj = (rxCurrent * voltage * rxWindowDuration) / 1000.0;
+    
+    // Total energy = TX + RX windows
+    double totalEnergyMj = txEnergyMj + rxEnergyMj;
+    
+    return totalEnergyMj;
 }
 
 } // namespace lorawan

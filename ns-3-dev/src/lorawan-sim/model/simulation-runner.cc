@@ -54,6 +54,10 @@ void SimulationRunner::SetObstaclesFile(const std::string& filePath) {
     m_obstaclesFile = filePath;
 }
 
+void SimulationRunner::SetOutputDirectory(const std::string& dirPath) {
+    m_recorder.SetOutputDirectory(dirPath);
+}
+
 void SimulationRunner::Clear() {
     m_environment.Clear();
     m_recorder.Clear();
@@ -513,6 +517,17 @@ void SimulationRunner::UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuc
         reward = m_ddqnAgents[nodeId]->calculateAdvancedReward(
             nodeId, currentPDR, avgEnergyPerPacket, snr, packetSuccess, 
             currentSFVal, currentTPVal, distance, metrics.packetsSent);
+        
+        // **ENHANCED DEBUG OUTPUT**
+        std::cout << "🧠 DDQN Node " << nodeId 
+                  << ": PDR=" << std::fixed << std::setprecision(1) << currentPDR*100 << "%"
+                  << ", Energy=" << std::setprecision(2) << avgEnergyPerPacket << "mJ"
+                  << ", Reward=" << std::setprecision(2) << reward 
+                  << ", SF=" << (int)currentSFVal 
+                  << ", TP=" << std::setprecision(1) << currentTPVal << "dBm"
+                  << ", SNR=" << std::setprecision(1) << snr << "dB"
+                  << ", Dist=" << std::setprecision(0) << distance << "m"
+                  << ", ε=" << std::setprecision(3) << m_ddqnAgents[nodeId]->getEpsilon() << std::endl;
     }
     
     static std::map<uint32_t, std::vector<double>> previousStates;
@@ -540,6 +555,18 @@ void SimulationRunner::UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuc
                 }
             }
         });
+    }
+    
+    // Check for poor performance and boost exploration if needed
+    if (metrics.packetsSent >= 10 && currentPDR < 0.3) {
+        std::cout << "🚨 POOR PERFORMANCE DETECTED - Node " << nodeId 
+                  << ": PDR=" << currentPDR*100 << "%, SNR=" << snr << "dB, SF=" << (int)currentSFVal << std::endl;
+        
+        // Force exploration of higher SF if stuck in low SF with poor performance
+        if (currentSFVal < 9 && m_ddqnAgents[nodeId]->getEpsilon() < 0.3) {
+            m_ddqnAgents[nodeId]->increaseExploration();
+            std::cout << "🔄 FORCED EXPLORATION: Increasing epsilon for SF exploration" << std::endl;
+        }
     }
     
     if (newTP != -1) {

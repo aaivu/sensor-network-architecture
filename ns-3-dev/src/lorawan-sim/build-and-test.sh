@@ -10,13 +10,27 @@ echo "================================================"
 echo "LoRaWAN Simulation Module - Build & Test Script"
 echo "================================================"
 echo ""
+echo "Script directory: $SCRIPT_DIR"
+echo "NS-3 root: $NS3_ROOT"
+echo ""
 
+# Navigate to ns-3 root
 cd "$NS3_ROOT"
 
+# Verify we're in the right place
+# if [ ! -f "ns3" ]; then
+#     echo "❌ Error: ns3 script not found in $NS3_ROOT"
+#     echo "   Make sure you're running this from the lorawan-sim module directory"
+#     exit 1
+# fi
+
+echo "✅ Found ns3 in: $(pwd)"
+echo ""
+
 # Build the module
-echo "📦 Building lorawan-sim module..."
-./ns3 configure --enable-examples
-./ns3 build lorawan-sim
+echo "📦 Building lorawan module..."
+./ns3 configure --enable-examples --enable-tests
+./ns3 build
 
 if [ $? -eq 0 ]; then
     echo "✅ Build successful!"
@@ -33,7 +47,7 @@ echo ""
 
 # Test 1: No ADR
 echo "🧪 Test 1: Running with NO ADR..."
-./ns3 run "lorawan-sim-example --adr=off --nDevices=5 --simulationTime=60" > /dev/null 2>&1
+./ns3 run "advanced-ddqn-per-adr-example --adr=off --nDevices=5 --simulationTime=60" > /dev/null 2>&1
 if [ $? -eq 0 ]; then
     echo "   ✅ NO ADR test passed"
 else
@@ -42,7 +56,7 @@ fi
 
 # Test 2: Classical ADR
 echo "🧪 Test 2: Running with Classical ADR..."
-./ns3 run "lorawan-sim-example --adr=on --nDevices=5 --simulationTime=60" > /dev/null 2>&1
+./ns3 run "advanced-ddqn-per-adr-example --adr=on --nDevices=5 --simulationTime=60" > /dev/null 2>&1
 if [ $? -eq 0 ]; then
     echo "   ✅ Classical ADR test passed"
 else
@@ -51,7 +65,7 @@ fi
 
 # Test 3: DDQN ADR
 echo "🧪 Test 3: Running with DDQN ADR..."
-./ns3 run "lorawan-sim-example --adr=ddqn --nDevices=5 --simulationTime=60" > /dev/null 2>&1
+./ns3 run "advanced-ddqn-per-adr-example --adr=ddqn --nDevices=5 --simulationTime=60" > /dev/null 2>&1
 if [ $? -eq 0 ]; then
     echo "   ✅ DDQN ADR test passed"
 else
