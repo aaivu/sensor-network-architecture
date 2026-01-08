@@ -226,10 +226,11 @@ class LoRaWANADRAnalyzer:
                 else:
                     print(f"     📡 Medium-range device - Moderate signal conditions")
     
-    def create_performance_visualizations(self, all_stats):
-        """Create performance visualization charts - DISABLED FOR GUI"""
-        print("\n📊 Visualization generation disabled for GUI")
-        return
+    def create_performance_visualizations(self, all_stats, output_dir=None):
+        """Create performance visualization charts and save to specific directory"""
+        print("\n📊 Generating performance visualizations...")
+        
+        df_stats = pd.DataFrame(all_stats)
         
         # Set up the plotting style
         plt.style.use('default')
@@ -281,13 +282,24 @@ class LoRaWANADRAnalyzer:
         
         plt.tight_layout()
         
+        # Determine output file path
+        if output_dir:
+            # Create plots directory in the run-specific folder
+            plots_dir = Path(output_dir).parent / 'plots'
+            plots_dir.mkdir(parents=True, exist_ok=True)
+            output_file = plots_dir / 'lorawan_adr_performance_analysis.png'
+        else:
+            output_file = 'lorawan_adr_performance_analysis.png'
+        
         # Save the plot
-        output_file = 'lorawan_adr_performance_analysis.png'
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
+        plt.savefig(str(output_file), dpi=300, bbox_inches='tight')
         print(f"  ✅ Performance charts saved as: {output_file}")
         
-        plt.show()
+        # Close the figure to free memory
+        plt.close(fig)
     
+
+
     def generate_statistical_report(self, all_stats):
         """Generate detailed statistical report"""
         print("\n" + "="*80)
@@ -364,7 +376,7 @@ class LoRaWANADRAnalyzer:
         df_comparison.to_csv(comparison_file, index=False)
         print(f"  ✅ Device comparison exported to: {comparison_file}")
     
-    def run_complete_analysis(self):
+    def run_complete_analysis(self, output_dir=None):
         """Run the complete analysis pipeline"""
         print("🚀 Starting LoRaWAN ADR Performance Analysis...")
         print("="*60)
@@ -384,8 +396,11 @@ class LoRaWANADRAnalyzer:
         self.print_device_by_device_analysis(device_comparison)
         self.generate_statistical_report(all_stats)
         
-        # Skip visualizations for GUI version
-        print("📊 Visualization skipped (GUI mode)")
+        # Generate visualizations and save to run-specific directory
+        try:
+            self.create_performance_visualizations(all_stats, output_dir)
+        except Exception as e:
+            print(f"⚠  Error creating visualizations: {e}")
         
         # Export results
         self.export_results(all_stats, device_comparison)
@@ -394,6 +409,8 @@ class LoRaWANADRAnalyzer:
         print("📋 Summary files created:")
         print("   - lorawan_adr_analysis_results.csv")
         print("   - device_comparison_summary.csv")
+        if output_dir:
+            print("   - lorawan_adr_performance_analysis.png (in plots directory)")
 
 def main():
     """Main function to run the analysis"""
@@ -415,9 +432,9 @@ def main():
     
     print(f"📂 Using datasets folder: {datasets_folder}")
     
-    # Create analyzer and run analysis
+    # Create analyzer and run analysis with output directory
     analyzer = LoRaWANADRAnalyzer(datasets_folder)
-    analyzer.run_complete_analysis()
+    analyzer.run_complete_analysis(output_dir=datasets_folder)
 
 if __name__ == "__main__":
     main()

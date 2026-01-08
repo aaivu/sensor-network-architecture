@@ -20,6 +20,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QDesktopServices>
+#include <QUrl>
 
 #ifdef ENABLE_NS3
 #include "ns3/core-module.h"
@@ -212,7 +214,7 @@ void MainWindow::setupParameterPanel() {
     simLayout->addWidget(new QLabel("WiFi Interferers:"), 2, 0);
     m_wifiInterferersSpin = new QSpinBox();
     m_wifiInterferersSpin->setRange(0, 100);
-    m_wifiInterferersSpin->setValue(3);  // Default to 3 interferers
+    m_wifiInterferersSpin->setValue(0);  // Default to 0 interferers
     simLayout->addWidget(m_wifiInterferersSpin, 2, 1);
     
     simLayout->addWidget(new QLabel("ADR Mode:"), 3, 0);
@@ -343,9 +345,22 @@ void MainWindow::setupResultsPanel() {
     m_visualizeButton = new QPushButton("Visualize Data");
     m_visualizeButton->setEnabled(false);
     connect(m_visualizeButton, &QPushButton::clicked, [this]() {
-        // TODO: Launch Python visualization script
-        QMessageBox::information(this, "Visualize", 
-            "Launch python_visualization.py with output CSV:\n" + m_currentOutputFile);
+        // Find the analysis plot image in the current simulation run's plots directory
+        QString plotPath = m_outputDirectory + "/plots/lorawan_adr_performance_analysis.png";
+        
+        if (!QFile::exists(plotPath)) {
+            QMessageBox::warning(this, "Visualize Data", 
+                "Analysis plot not found. Please run the simulation first.\n\nExpected location:\n" + plotPath);
+            return;
+        }
+        
+        // Open the image with the default system viewer
+        if (!QDesktopServices::openUrl(QUrl::fromLocalFile(plotPath))) {
+            QMessageBox::warning(this, "Visualize Data", 
+                "Failed to open the plot image.\n\nPath: " + plotPath);
+        } else {
+            logMessage("Opened analysis plot: " + plotPath, "INFO");
+        }
     });
     buttonLayout->addWidget(m_visualizeButton);
     
@@ -616,6 +631,28 @@ void MainWindow::runSimulationThread() {
             adrModes << adrMode;
         }
         
+        // Save simulation parameters to file
+        QString paramsFile = m_outputDirectory + "/config/simulation_parameters.txt";
+        QFile paramFile(paramsFile);
+        if (paramFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream out(&paramFile);
+            out << "========== SIMULATION PARAMETERS ==========\n";
+            out << "Number of Devices: " << m_numDevicesSpin->value() << "\n";
+            out << "Simulation Time: " << m_simTimeSpin->value() << " seconds\n";
+            out << "App Period: " << m_appPeriodSpin->value() << " seconds\n";
+            out << "Radius: " << m_radiusSpin->value() << " meters\n";
+            out << "WiFi Interferers: " << m_wifiInterferersSpin->value() << "\n";
+            out << "ADR Mode(s): " << adrModes.join(", ") << "\n";
+            out << "Output CSV: " << m_outputDirectory + "/results-csv/simulation_results.csv" << "\n";
+            out << "Environmental Modeling: DISABLED\n";
+            out << "==========================================\n";
+            paramFile.close();
+            
+            QMetaObject::invokeMethod(this, [paramsFile]() {
+                logMessage("Simulation parameters saved to: " + paramsFile, "INFO");
+            }, Qt::QueuedConnection);
+        }
+        
         // Run simulation(s)
         for (int i = 0; i < adrModes.size(); i++) {
             QString currentAdrMode = adrModes[i];
@@ -743,11 +780,25 @@ void MainWindow::runSimulationThread() {
                             .arg(nodePositionsPath)
                             .arg(obstaclesPath);
         
-        QMetaObject::invokeMethod(this, [this, ns3Dir, command, currentAdrMode, i, adrModes]() {
+        // Save command to file
+        QString cmdFile = m_outputDirectory + "/config/simulation_command.sh";
+        QFile commandFile(cmdFile);
+        if (commandFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            QTextStream out(&commandFile);
+            out << "#!/bin/bash\n";
+            out << "# Simulation command for ADR mode: " << currentAdrMode << "\n";
+            out << "cd " << ns3Dir << "\n";
+            out << command << "\n";
+            commandFile.close();
+            commandFile.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+        }
+        
+        QMetaObject::invokeMethod(this, [this, ns3Dir, command, currentAdrMode, i, adrModes, cmdFile]() {
             if (adrModes.size() > 1) {
                 logMessage(QString("========== Simulation %1 of %2: ADR mode '%3' ==========")
                           .arg(i+1).arg(adrModes.size()).arg(currentAdrMode), "INFO");
             }
+            logMessage("Command saved to: " + cmdFile, "INFO");
             logMessage("Working directory: " + ns3Dir, "INFO");
             logMessage("Executing command:", "INFO");
             logMessage(command, "CMD");
@@ -890,6 +941,8 @@ void MainWindow::runAnalysisScript() {
         logMessage("Analysis completed successfully", "SUCCESS");
         logMessage("========================================", "SUCCESS");
     }
+    
+    // Note: Plot is now generated directly in the simulation results directory by analysis_gui.py
 }
 
 void MainWindow::onSimulationFinished() {

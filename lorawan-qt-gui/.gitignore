@@ -62,3 +62,5 @@ lorawan-gui.app/
 tmp/
 temp/
 *.tmp
+
+simulation_results/
