@@ -25,11 +25,13 @@ class LoRaWANADRAnalyzer:
         """Load all CSV datasets for analysis"""
         print("🔍 Loading LoRaWAN datasets...")
         
-        # Find all device datasets
+        # Find all device datasets (including PPO and MARL)
         patterns = {
             'no_adr': 'no_adr_advanced_pre_tx_rssi_dataset_device_*_dataset.csv',
             'classical_adr': 'adr_advanced_pre_tx_rssi_dataset_device_*_dataset.csv',
-            'ddqn_adr': 'ddqn_adr_advanced_pre_tx_rssi_dataset_device_*_dataset.csv'
+            'ddqn_adr': 'ddqn_adr_advanced_pre_tx_rssi_dataset_device_*_dataset.csv',
+            'ppo_adr': 'ppo_adr_advanced_pre_tx_rssi_dataset_device_*_dataset.csv',
+            'marl_adr': 'marl_adr_advanced_pre_tx_rssi_dataset_device_*_dataset.csv'
         }
         
         for adr_type, pattern in patterns.items():
@@ -112,7 +114,7 @@ class LoRaWANADRAnalyzer:
         # Analyze each device for each ADR type
         for device_id in all_devices:
             device_comparison[device_id] = {}
-            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr']:
+            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr']:
                 stats = self.analyze_device_performance(device_id, adr_type)
                 if stats:
                     all_stats.append(stats)
@@ -140,13 +142,15 @@ class LoRaWANADRAnalyzer:
         print("\n📊 OVERALL PERFORMANCE BY ADR TYPE:")
         print("-" * 50)
         
-        for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr']:
+        for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr']:
             if adr_type in adr_summary.index:
                 row = adr_summary.loc[adr_type]
                 adr_name = {
                     'no_adr': 'No ADR',
                     'classical_adr': 'Classical ADR', 
-                    'ddqn_adr': 'DDQN-PER ADR'
+                    'ddqn_adr': 'DDQN-PER ADR',
+                    'ppo_adr': 'PPO ADR',
+                    'marl_adr': 'MARL ADR'
                 }[adr_type]
                 
                 print(f"\n{adr_name}:")
@@ -186,13 +190,15 @@ class LoRaWANADRAnalyzer:
             print(f"\n{'ADR Method':<15} {'PDR (%)':<8} {'Avg SNR':<10} {'TX Power':<10} {'SF':<5} {'Energy (mJ)':<12}")
             print("-" * 70)
             
-            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr']:
+            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr']:
                 if adr_type in device_data:
                     stats = device_data[adr_type]
                     adr_name = {
                         'no_adr': 'No ADR',
                         'classical_adr': 'Classical ADR',
-                        'ddqn_adr': 'DDQN-PER ADR'
+                        'ddqn_adr': 'DDQN-PER ADR',
+                        'ppo_adr': 'PPO ADR',
+                        'marl_adr': 'MARL ADR'
                     }[adr_type]
                     
                     print(f"{adr_name:<15} {stats['pdr']:<8.1f} {stats['avg_snr']:<10.1f} "
@@ -237,7 +243,9 @@ class LoRaWANADRAnalyzer:
         adr_mapping = {
             'no_adr': 'No ADR',
             'classical_adr': 'Classical ADR',
-            'ddqn_adr': 'DDQN-PER ADR'
+            'ddqn_adr': 'DDQN-PER ADR',
+            'ppo_adr': 'PPO ADR',
+            'marl_adr': 'MARL ADR'
         }
         df_stats['adr_type_label'] = df_stats['adr_type'].map(adr_mapping)
         
@@ -248,7 +256,7 @@ class LoRaWANADRAnalyzer:
         axes[0,0].tick_params(axis='x', rotation=45)
         
         # 2. SNR vs Distance scatter plot
-        colors = {'No ADR': 'blue', 'Classical ADR': 'orange', 'DDQN-PER ADR': 'green'}
+        colors = {'No ADR': 'blue', 'Classical ADR': 'orange', 'DDQN-PER ADR': 'green', 'PPO ADR': 'red', 'MARL ADR': 'purple'}
         for adr_type in df_stats['adr_type_label'].unique():
             data = df_stats[df_stats['adr_type_label'] == adr_type]
             axes[0,1].scatter(data['distance'], data['avg_snr'], 
@@ -314,6 +322,8 @@ class LoRaWANADRAnalyzer:
         no_adr_pdr = df_stats[df_stats['adr_type'] == 'no_adr']['pdr']
         classical_adr_pdr = df_stats[df_stats['adr_type'] == 'classical_adr']['pdr']
         ddqn_adr_pdr = df_stats[df_stats['adr_type'] == 'ddqn_adr']['pdr']
+        ppo_adr_pdr = df_stats[df_stats['adr_type'] == 'ppo_adr']['pdr']
+        marl_adr_pdr = df_stats[df_stats['adr_type'] == 'marl_adr']['pdr']
         
         if len(no_adr_pdr) > 0 and len(ddqn_adr_pdr) > 0:
             t_stat, p_value = ttest_ind(ddqn_adr_pdr, no_adr_pdr)
@@ -325,9 +335,25 @@ class LoRaWANADRAnalyzer:
             significance = "significant" if p_value < 0.05 else "not significant"
             print(f"DDQN-PER vs Classical ADR PDR: t={t_stat:.3f}, p={p_value:.3f} ({significance})")
         
-        # ANOVA test for all three groups
-        if len(no_adr_pdr) > 0 and len(classical_adr_pdr) > 0 and len(ddqn_adr_pdr) > 0:
-            f_stat, p_value = f_oneway(no_adr_pdr, classical_adr_pdr, ddqn_adr_pdr)
+        if len(ppo_adr_pdr) > 0 and len(classical_adr_pdr) > 0:
+            t_stat, p_value = ttest_ind(ppo_adr_pdr, classical_adr_pdr)
+            significance = "significant" if p_value < 0.05 else "not significant"
+            print(f"PPO vs Classical ADR PDR: t={t_stat:.3f}, p={p_value:.3f} ({significance})")
+        
+        if len(marl_adr_pdr) > 0 and len(classical_adr_pdr) > 0:
+            t_stat, p_value = ttest_ind(marl_adr_pdr, classical_adr_pdr)
+            significance = "significant" if p_value < 0.05 else "not significant"
+            print(f"MARL vs Classical ADR PDR: t={t_stat:.3f}, p={p_value:.3f} ({significance})")
+        
+        if len(marl_adr_pdr) > 0 and len(ddqn_adr_pdr) > 0:
+            t_stat, p_value = ttest_ind(marl_adr_pdr, ddqn_adr_pdr)
+            significance = "significant" if p_value < 0.05 else "not significant"
+            print(f"MARL vs DDQN-PER ADR PDR: t={t_stat:.3f}, p={p_value:.3f} ({significance})")
+        
+        # ANOVA test for all groups
+        all_groups = [g for g in [no_adr_pdr, classical_adr_pdr, ddqn_adr_pdr, ppo_adr_pdr, marl_adr_pdr] if len(g) > 0]
+        if len(all_groups) >= 3:
+            f_stat, p_value = f_oneway(*all_groups)
             significance = "significant" if p_value < 0.05 else "not significant"
             print(f"ANOVA test (all ADR types): F={f_stat:.3f}, p={p_value:.3f} ({significance})")
     
