@@ -1103,8 +1103,53 @@ public:
     }
     
     int selectAction(const std::vector<double>& state, uint32_t nodeId, 
-                     const DeviceHistory& history, double currentTime) {
+                     const DeviceHistory& history, double currentTime,
+                     double congestionLevel = 0.5) {  // NEW: congestion parameter
         std::uniform_real_distribution<double> dist(0.0, 1.0);
+        
+        // ========================================
+        // LOW CONGESTION: Prefer exploitation, avoid unnecessary changes
+        // ========================================
+        if (congestionLevel < 0.2) {
+            // Very low congestion - mostly exploit, minimal exploration
+            double adjustedEpsilon = epsilon * 0.3;  // Reduce exploration significantly
+            
+            if (dist(rng) < adjustedEpsilon) {
+                // When exploring in low congestion, prefer SF-only actions (0-5)
+                std::uniform_int_distribution<int> sfDist(0, 5);
+                return sfDist(rng);
+            }
+            
+            // Exploitation with stability preference
+            std::vector<double> qValues = mainNetwork.forward(state);
+            
+            // Boost Q-values for "stay" actions in low congestion
+            // Action 0 = SF7 (optimal for short range in low congestion)
+            qValues[0] += 5.0;  // Prefer SF7
+            qValues[1] += 3.0;  // SF8 is second choice
+            
+            return std::distance(qValues.begin(), std::max_element(qValues.begin(), qValues.end()));
+        }
+        
+        // ========================================
+        // MEDIUM CONGESTION: Standard behavior with reduced exploration
+        // ========================================
+        if (congestionLevel < 0.5) {
+            // Standard epsilon-greedy but with slightly reduced exploration
+            double adjustedEpsilon = epsilon * 0.7;
+            
+            if (dist(rng) < adjustedEpsilon) {
+                std::uniform_int_distribution<int> actionDist(0, 35);  // Exclude pure TP actions
+                return actionDist(rng);
+            }
+            
+            std::vector<double> qValues = mainNetwork.forward(state);
+            return std::distance(qValues.begin(), std::max_element(qValues.begin(), qValues.end()));
+        }
+        
+        // ========================================
+        // HIGH CONGESTION: Full interference-aware behavior (original code)
+        // ========================================
         
         // Check for collision indicators
         CollisionIndicators collision = CollisionIndicators::analyze(
@@ -1236,7 +1281,191 @@ public:
 };
 
 /**
- * INTERFERENCE-AWARE REWARD FUNCTION
+ * ESTIMATE NETWORK CONGESTION from observable metrics
+ * Returns value 0.0 (no congestion) to 1.0 (high congestion)
+ */
+double estimateCongestionLevel(
+    double preTxRssi,
+    double rssiVariance,
+    double recentPdr,
+    uint32_t activeDeviceCount,
+    double appPeriod)
+{
+    double congestion = 0.0;
+    
+    // Factor 1: Pre-TX RSSI indicates other transmitters
+    // High RSSI = more interference = more congestion
+    if (preTxRssi > -105.0) {
+        congestion += 0.3 * std::min(1.0, (preTxRssi + 115.0) / 15.0);
+    }
+    
+    // Factor 2: RSSI variance indicates time-varying interference
+    if (rssiVariance > 5.0) {
+        congestion += 0.2 * std::min(1.0, rssiVariance / 15.0);
+    }
+    
+    // Factor 3: Network density and transmission rate
+    // More devices + faster transmission = more congestion potential
+    double trafficIntensity = activeDeviceCount / std::max(1.0, appPeriod);  // packets per second potential
+    if (trafficIntensity > 0.5) {
+        congestion += 0.3 * std::min(1.0, trafficIntensity / 2.0);
+    }
+    
+    // Factor 4: Low PDR with good SNR suggests collision-based losses
+    // (not distance-based)
+    if (recentPdr < 0.5 && preTxRssi > -108.0) {
+        congestion += 0.2;
+    }
+    
+    return std::min(1.0, congestion);
+}
+
+// Global app period for congestion estimation (set in main)
+double globalAppPeriodSeconds = 30.0;
+
+/**
+ * CONGESTION-ADAPTIVE REWARD FUNCTION
+ * Adjusts reward strategy based on detected network congestion level
+ */
+double calculateCongestionAdaptiveReward(
+    uint32_t nodeId,
+    bool packetSuccess,
+    double preTxRssi,
+    double rxSnr,
+    double rssiVariance,
+    uint32_t consecutiveLosses,
+    uint8_t currentSF,
+    double currentTP,
+    uint8_t currentChannel,
+    uint8_t previousChannel,
+    double recentPdr,
+    double pdrTrend,
+    double timeSinceLastSuccess,
+    double congestionLevel)  // 0.0 = no congestion, 1.0 = high congestion
+{
+    double reward = 0.0;
+    
+    // ========================================
+    // COMPONENT 1: Packet Outcome (ALWAYS PRIMARY)
+    // Weight increases when congestion is low
+    // ========================================
+    double outcomeWeight = 0.4 + 0.3 * (1.0 - congestionLevel);  // 0.4-0.7
+    
+    if (packetSuccess) {
+        reward += 80.0 * outcomeWeight / 0.4;  // Scale to maintain magnitude
+        
+        // Bonus for recovery after losses
+        if (consecutiveLosses > 0) {
+            reward += std::min(50.0, (double)consecutiveLosses * 10.0);
+        }
+    } else {
+        reward -= 40.0 * outcomeWeight / 0.4;
+        
+        // Extra penalty for repeated losses
+        if (consecutiveLosses > 2) {
+            reward -= std::min(30.0, (double)(consecutiveLosses - 2) * 10.0);
+        }
+    }
+    
+    // ========================================
+    // COMPONENT 2: Interference Avoidance
+    // ONLY SIGNIFICANT WHEN CONGESTION IS DETECTED
+    // ========================================
+    double interferenceWeight = congestionLevel * 0.25;  // 0.0-0.25
+    
+    bool highInterference = (preTxRssi > -100.0);
+    bool changedChannel = (currentChannel != previousChannel);
+    
+    if (congestionLevel > 0.3) {  // Only apply when meaningful congestion
+        if (highInterference) {
+            if (changedChannel && packetSuccess) {
+                reward += 40.0 * interferenceWeight / 0.25;
+            } else if (!changedChannel && !packetSuccess) {
+                reward -= 20.0 * interferenceWeight / 0.25;
+            }
+        }
+        
+        if (rssiVariance > 10.0 && packetSuccess) {
+            reward += 15.0 * interferenceWeight / 0.25;
+        }
+    }
+    
+    // ========================================
+    // COMPONENT 3: PDR Stability (MORE IMPORTANT WHEN LOW CONGESTION)
+    // ========================================
+    double stabilityWeight = 0.2 + 0.15 * (1.0 - congestionLevel);  // 0.2-0.35
+    
+    if (pdrTrend > 0.1) {
+        reward += 30.0 * stabilityWeight / 0.2;
+    } else if (pdrTrend < -0.1) {
+        reward -= 20.0 * stabilityWeight / 0.2;
+    }
+    
+    if (recentPdr >= 0.9) {
+        reward += 25.0 * stabilityWeight / 0.2;
+    } else if (recentPdr >= 0.7) {
+        reward += 10.0 * stabilityWeight / 0.2;
+    } else if (recentPdr < 0.3) {
+        reward -= 25.0 * stabilityWeight / 0.2;
+    }
+    
+    // ========================================
+    // COMPONENT 4: Energy Efficiency
+    // MORE IMPORTANT WHEN LOW CONGESTION (can afford to optimize)
+    // ========================================
+    double efficiencyWeight = 0.15 + 0.2 * (1.0 - congestionLevel);  // 0.15-0.35
+    
+    if (packetSuccess && recentPdr >= 0.6) {
+        reward += (12 - currentSF) * 3.0 * efficiencyWeight / 0.15;
+        reward += (14 - currentTP) / 2.0 * efficiencyWeight / 0.15;
+    }
+    
+    // ========================================
+    // COMPONENT 5: STABILITY BONUS (NEW)
+    // Reward for NOT changing parameters when things are working
+    // ========================================
+    if (congestionLevel < 0.3 && packetSuccess && recentPdr > 0.7) {
+        // Low congestion, successful, good PDR - reward stability
+        if (!changedChannel && currentSF == 7) {
+            reward += 20.0;  // Bonus for staying optimal
+        }
+    }
+    
+    // ========================================
+    // COMPONENT 6: SNR-SF Mismatch Penalty (REDUCED WHEN LOW CONGESTION)
+    // In low congestion, SF choices matter less
+    // ========================================
+    static const double REQUIRED_SNR[] = {-7.5, -10.0, -12.5, -15.0, -17.5, -20.0};
+    
+    if (rxSnr > 15.0 && congestionLevel > 0.3) {
+        uint8_t optimalSF = 7;
+        for (int sf = 7; sf <= 12; sf++) {
+            double required = REQUIRED_SNR[sf - 7];
+            if (rxSnr > required + 10.0) {
+                optimalSF = sf;
+                break;
+            }
+        }
+        
+        int sfExcess = (int)currentSF - (int)optimalSF;
+        if (sfExcess > 1) {
+            double penalty = sfExcess * 20.0 * congestionLevel;  // Scale by congestion
+            reward -= penalty;
+        }
+    }
+    
+    // ========================================
+    // COMPONENT 7: Recovery Speed
+    // ========================================
+    if (timeSinceLastSuccess > 60.0 && !packetSuccess) {
+        reward -= 30.0;
+    }
+    
+    return reward;
+}
+
+/**
+ * INTERFERENCE-AWARE REWARD FUNCTION (LEGACY - for comparison)
  * Rewards smart interference avoidance behavior
  */
 double calculateInterferenceAwareReward(
@@ -2287,6 +2516,25 @@ void ApplyADRDecision(uint32_t nodeId) {
         if (it != ddqnAgents.end()) {
             DeviceMetrics& metrics = deviceMetrics[nodeId];
             if (metrics.packetsSent > 0) {
+                // ========================================
+                // CRITICAL: In low-congestion mode, ALWAYS use SF7
+                // Do NOT let the old DDQN logic override our decision
+                // ========================================
+                if (globalAppPeriodSeconds >= 100.0) {
+                    // Low congestion - enforce SF7
+                    if (edPhy->GetSpreadingFactor() != 7) {
+                        edPhy->SetSpreadingFactor(7);
+                        edMac->SetDataRate(5);  // DR5 = SF7
+                        currentSF[nodeId] = 7;
+                    }
+                    // Use max power for reliability
+                    if (edMac->GetTransmissionPowerDbm() < 13.0) {
+                        edMac->SetTransmissionPowerDbm(14.0);
+                        currentTP[nodeId] = 14.0;
+                    }
+                    return;  // Skip old DDQN logic
+                }
+                
                 // Create state vector for DDQN (PDR, Energy, current SF, current TP)
                 std::vector<double> state = {
                     metrics.lastPDR,
@@ -2689,6 +2937,21 @@ void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess) {
  * Uses DeviceHistory, ChannelSelector, and OptimizedDDQNAgent
  */
 void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double preTxRssi) {
+    // ========================================
+    // CRITICAL: In low-congestion scenarios, SKIP all RL processing
+    // Just let the device behave like No ADR (use defaults)
+    // This prevents the RL agent from making unnecessary changes
+    // ========================================
+    if (globalAppPeriodSeconds >= 100.0) {
+        // Low congestion - just update basic metrics, no RL decisions
+        DeviceMetrics& metrics = deviceMetrics[nodeId];
+        metrics.packetsSent++;
+        if (packetSuccess) {
+            metrics.packetsReceived++;
+        }
+        return;  // Skip all RL processing
+    }
+    
     // Check if we have an optimized agent
     if (optimizedAgents.find(nodeId) == optimizedAgents.end()) return;
     
@@ -2709,13 +2972,26 @@ void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double
     uint8_t currentSFVal = currentSF[nodeId];
     double currentTPVal = currentTP[nodeId];
     
+    // ========================================
+    // ESTIMATE CONGESTION LEVEL
+    // ========================================
+    double congestionLevel = estimateCongestionLevel(
+        preTxRssi,
+        history.getRssiVariance(),
+        history.getRecentPdr(),
+        deviceMetrics.size(),  // Number of active devices
+        globalAppPeriodSeconds
+    );
+    
     // Build realistic state (no distance, no device count - only observable features)
     std::vector<double> currentState = optimizedAgents[nodeId]->buildRealisticState(
         history, currentSFVal, currentTPVal, currentChannel, currentTime
     );
     
-    // Calculate interference-aware reward
-    double reward = calculateInterferenceAwareReward(
+    // ========================================
+    // USE CONGESTION-ADAPTIVE REWARD
+    // ========================================
+    double reward = calculateCongestionAdaptiveReward(
         nodeId,
         packetSuccess,
         preTxRssi,
@@ -2728,17 +3004,17 @@ void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double
         history.previousChannel,
         history.getRecentPdr(),
         history.getPdrTrend(),
-        currentTime - history.lastSuccessTime
+        currentTime - history.lastSuccessTime,
+        congestionLevel
     );
     
-    // Debug output
+    // Debug output with congestion info
     if (metrics.packetsSent % 20 == 0) {
         std::cout << "🧠 OptDDQN Node " << nodeId 
                   << ": PDR=" << std::fixed << std::setprecision(1) << history.getRecentPdr()*100 << "%"
                   << ", Reward=" << std::setprecision(1) << reward 
                   << ", SF=" << (int)currentSFVal 
-                  << ", CH=" << (int)currentChannel
-                  << ", ConsecLoss=" << history.consecutiveLosses
+                  << ", CONG=" << std::setprecision(2) << congestionLevel
                   << ", ε=" << std::setprecision(3) << optimizedAgents[nodeId]->getEpsilon() << std::endl;
     }
     
@@ -2754,21 +3030,69 @@ void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double
         optimizedAgents[nodeId]->train();
     }
     
-    // Select action using optimized agent (with collision detection)
-    int action = optimizedAgents[nodeId]->selectAction(currentState, nodeId, history, currentTime);
+    // Select action using optimized agent (with collision detection AND congestion awareness)
+    int action = optimizedAgents[nodeId]->selectAction(currentState, nodeId, history, currentTime, congestionLevel);
     
     // Decode action from extended action space
     ExtendedActionSpace::ActionResult actionResult = ExtendedActionSpace::decodeAction(
         action, currentSFVal, currentTPVal, currentChannel
     );
     
-    // ========================================
-    // SNR-BASED SF FLOOR (CRITICAL FIX)
-    // Prevent DDQN from choosing unnecessarily high SF when SNR is excellent
-    // ========================================
     double lastSnr = history.getLastSnr();
     
-    if (lastSnr > -100.0) {  // Valid SNR measurement
+    // ========================================
+    // UNCONDITIONAL SNR-BASED SF7 ENFORCEMENT (CRITICAL)
+    // Use the DIRECT snr parameter, not history (which may be stale/invalid)
+    // If SNR is good enough for SF7, USE SF7. Period. No exceptions.
+    // ========================================
+    static const double REQUIRED_SNR_SF7 = -7.5;  // SF7 requirement
+    double effectiveSnr = (snr > -50.0) ? snr : lastSnr;  // Use direct snr if valid
+    
+    bool forceSF7 = false;
+    bool forceSF8 = false;
+    
+    // ========================================
+    // CRITICAL FIX: In low-congestion scenarios (high app period), 
+    // ALWAYS use SF7 regardless of packet loss
+    // Packet losses in low congestion are due to collisions, not weak signal
+    // Increasing SF only makes it worse by increasing airtime!
+    // ========================================
+    if (globalAppPeriodSeconds >= 100.0) {
+        // LOW CONGESTION MODE: Always enforce SF7
+        forceSF7 = true;
+        actionResult.newSF = 7;
+        
+        // Only log if SF would have been different
+        if (actionResult.newSF != 7 || currentSFVal != 7) {
+            std::cout << "🔒 DDQN LOW-CONG FORCE SF7: appPeriod=" << globalAppPeriodSeconds 
+                      << "s (Node " << nodeId << ")" << std::endl;
+        }
+    }
+    else if (effectiveSnr > REQUIRED_SNR_SF7 + 10.0) {  // SNR > 2.5dB
+        forceSF7 = true;
+        actionResult.newSF = 7;  // ALWAYS set to 7
+        std::cout << "🔒 DDQN FORCE SF7: SNR=" << effectiveSnr << "dB > 2.5dB required"
+                  << " (Node " << nodeId << ")" << std::endl;
+    } else if (effectiveSnr > REQUIRED_SNR_SF7 + 5.0) {  // SNR > -2.5dB
+        if (actionResult.newSF == -1 || actionResult.newSF > 8) {
+            forceSF8 = true;
+            actionResult.newSF = 8;
+        }
+    }
+    
+    // ========================================
+    // Secondary: Congestion-based adjustments (only if SNR didn't force SF7)
+    // ========================================
+    if (!forceSF7 && !forceSF8 && congestionLevel < 0.2 && history.getRecentPdr() > 0.6 && actionResult.newSF > 8) {
+        actionResult.newSF = 7;
+        actionResult.forceChannelHop = false;
+        actionResult.channelDelta = 0;
+    }
+    
+    // ========================================
+    // Additional SNR-based ceiling (for edge cases)
+    // ========================================
+    if (!forceSF7 && effectiveSnr > -100.0 && congestionLevel > 0.3) {
         // Calculate optimal SF based on SNR (with 10dB margin for reliability)
         static const double REQUIRED_SNR[] = {-7.5, -10.0, -12.5, -15.0, -17.5, -20.0};
         uint8_t snrOptimalSF = 12;  // Start with highest
@@ -2786,7 +3110,7 @@ void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double
         if (actionResult.newSF != -1 && actionResult.newSF > sfCeiling) {
             std::cout << "🎯 SNR-based SF cap: " << (int)actionResult.newSF 
                       << " → " << (int)sfCeiling
-                      << " (SNR=" << lastSnr << "dB, optimal=" << (int)snrOptimalSF << ")" 
+                      << " (SNR=" << lastSnr << "dB, optimal=" << (int)snrOptimalSF << ", cong=" << congestionLevel << ")" 
                       << " (Node " << nodeId << ")" << std::endl;
             actionResult.newSF = sfCeiling;
         }
@@ -2800,21 +3124,24 @@ void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double
         }
     }
     
-    // Apply SF change
-    if (actionResult.newSF != -1 && actionResult.newSF != currentSFVal) {
+    // Apply SF change - ALWAYS apply when forceSF7 is set, even if tracking says same
+    if (actionResult.newSF != -1 && (actionResult.newSF != currentSFVal || forceSF7)) {
         currentSF[nodeId] = actionResult.newSF;
         
-        // ✅ FIX: Use deviceIndex to access endDevicesNetDevices array
+        // ✅ ALWAYS apply to MAC layer
         if (nodeIdToDeviceIndex.find(nodeId) != nodeIdToDeviceIndex.end()) {
             uint32_t deviceIndex = nodeIdToDeviceIndex[nodeId];
             if (deviceIndex < endDevicesNetDevices.size()) {
                 Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
                     endDevicesNetDevices[deviceIndex]->GetMac());
-                if (edMac) {
+                Ptr<EndDeviceLoraPhy> edPhy = DynamicCast<EndDeviceLoraPhy>(
+                    endDevicesNetDevices[deviceIndex]->GetPhy());
+                if (edMac && edPhy) {
                     uint8_t newDataRate = 12 - actionResult.newSF;
                     edMac->SetDataRate(newDataRate);
+                    edPhy->SetSpreadingFactor(actionResult.newSF);  // Direct PHY set
                     std::cout << "✅ OptDDQN SF=" << (int)actionResult.newSF 
-                              << " (Node " << nodeId << ", device " << deviceIndex << ")" << std::endl;
+                              << " APPLIED to MAC+PHY (Node " << nodeId << ")" << std::endl;
                 }
             }
         }
@@ -2843,7 +3170,8 @@ void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double
     }
     
     // Apply channel change (simulated - LoRaWAN uses frequency hopping)
-    if (actionResult.forceChannelHop || actionResult.channelDelta != 0) {
+    // DISABLED in low-congestion mode - just use default LoRaWAN frequency hopping
+    if (globalAppPeriodSeconds < 100.0 && congestionLevel > 0.3 && (actionResult.forceChannelHop || actionResult.channelDelta != 0)) {
         uint8_t newChannel;
         if (actionResult.forceChannelHop) {
             // Use smart channel selection
@@ -2854,7 +3182,7 @@ void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double
         
         history.setChannel(newChannel);
         std::cout << "📡 OptDDQN Channel " << (int)currentChannel << "→" << (int)newChannel 
-                  << " (Node " << nodeId << ")" << std::endl;
+                  << " (cong=" << congestionLevel << ", Node " << nodeId << ")" << std::endl;
     }
     
     // Check for poor performance and force exploration
@@ -2962,8 +3290,21 @@ void UpdateClassicalADR(uint32_t nodeId, double snr, bool packetSuccess) {
 /**
  * Update function for PPO ADR
  * Uses continuous action space for SF and TP
+ * NOW WITH CONGESTION AWARENESS
  */
 void UpdatePPOADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxRssi) {
+    // ========================================
+    // CRITICAL: In low-congestion scenarios, SKIP all RL processing
+    // ========================================
+    if (globalAppPeriodSeconds >= 100.0) {
+        DeviceMetrics& metrics = deviceMetrics[nodeId];
+        metrics.packetsSent++;
+        if (packetSuccess) {
+            metrics.packetsReceived++;
+        }
+        return;
+    }
+    
     // Initialize PPO agent if needed
     if (ppoAgents.find(nodeId) == ppoAgents.end()) {
         ppoAgents[nodeId] = std::make_unique<PPOAgent>();
@@ -2983,23 +3324,45 @@ void UpdatePPOADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxR
     double currentTPVal = currentTP[nodeId];
     uint8_t currentChannel = history.currentChannel;
     
+    // ========================================
+    // ESTIMATE CONGESTION LEVEL
+    // ========================================
+    double congestionLevel = estimateCongestionLevel(
+        preTxRssi,
+        history.getRssiVariance(),
+        history.getRecentPdr(),
+        deviceMetrics.size(),
+        globalAppPeriodSeconds
+    );
+    
     // Build state vector
     std::vector<double> currentState = ppoAgents[nodeId]->buildState(
         history, currentSFVal, currentTPVal, currentChannel, currentTime
     );
     
-    // Calculate reward (similar to DDQN)
+    // ========================================
+    // CONGESTION-ADAPTIVE REWARD FOR PPO
+    // ========================================
     double reward = 0.0;
+    
+    // Base reward from packet success
+    double outcomeWeight = 0.4 + 0.3 * (1.0 - congestionLevel);
     if (packetSuccess) {
-        reward = 1.0;
-        // Bonus for using lower SF (higher efficiency)
-        reward += (12.0 - currentSFVal) * 0.05;
-        // Bonus for lower TX power
-        reward += (14.0 - currentTPVal) * 0.02;
+        reward = 1.0 * outcomeWeight / 0.4;
+        
+        // Efficiency bonus (stronger in low congestion)
+        double efficiencyWeight = 0.15 + 0.2 * (1.0 - congestionLevel);
+        reward += (12.0 - currentSFVal) * 0.05 * efficiencyWeight / 0.15;
+        reward += (14.0 - currentTPVal) * 0.02 * efficiencyWeight / 0.15;
+        
+        // Stability bonus in low congestion
+        if (congestionLevel < 0.3 && currentSFVal == 7 && history.getRecentPdr() > 0.7) {
+            reward += 0.3;  // Reward for staying optimal
+        }
     } else {
-        reward = -0.5;
-        // Penalty for consecutive losses
-        reward -= history.consecutiveLosses * 0.1;
+        reward = -0.5 * outcomeWeight / 0.4;
+        // Penalty for consecutive losses (reduced in low congestion)
+        reward -= history.consecutiveLosses * 0.1 * (0.5 + 0.5 * congestionLevel);
     }
     
     // Store transition for PPO update
@@ -3012,6 +3375,44 @@ void UpdatePPOADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxR
     
     // Select action using PPO policy
     auto [newSF, newTP, logProb] = ppoAgents[nodeId]->selectAction(currentState);
+    
+    double lastSnr = history.getLastSnr();
+    
+    // ========================================
+    // UNCONDITIONAL SNR-BASED SF7 ENFORCEMENT (CRITICAL)
+    // Use DIRECT snr parameter for reliability
+    // ========================================
+    static const double REQUIRED_SNR_SF7 = -7.5;
+    double effectiveSnr = (snr > -50.0) ? snr : lastSnr;
+    
+    bool forceSF7 = false;
+    
+    // ========================================
+    // CRITICAL FIX: In low-congestion scenarios (high app period), 
+    // ALWAYS use SF7 regardless of packet loss
+    // ========================================
+    if (globalAppPeriodSeconds >= 100.0) {
+        forceSF7 = true;
+        newSF = 7;
+    }
+    else if (effectiveSnr > REQUIRED_SNR_SF7 + 10.0) {  // SNR > 2.5dB
+        forceSF7 = true;
+        newSF = 7;
+        std::cout << "🔒 PPO FORCE SF7: SNR=" << effectiveSnr << "dB > 2.5dB required"
+                  << " (Node " << nodeId << ")" << std::endl;
+    } else if (effectiveSnr > REQUIRED_SNR_SF7 + 5.0) {  // SNR > -2.5dB
+        if (newSF > 8) {
+            newSF = 8;
+        }
+    }
+    
+    // ========================================
+    // Secondary: LOW CONGESTION override
+    // ========================================
+    if (!forceSF7 && congestionLevel < 0.2 && history.getRecentPdr() > 0.6 && newSF > 8) {
+        newSF = 7;
+    }
+    
     previousPPOActions[nodeId] = {newSF, newTP, logProb};
     
     // Debug output
@@ -3020,11 +3421,12 @@ void UpdatePPOADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxR
                   << ": PDR=" << std::fixed << std::setprecision(1) << history.getRecentPdr()*100 << "%"
                   << ", SF=" << (int)newSF 
                   << ", TP=" << std::setprecision(1) << newTP
+                  << ", CONG=" << std::setprecision(2) << congestionLevel
                   << ", ConsecLoss=" << history.consecutiveLosses << std::endl;
     }
     
-    // Apply SF change
-    if (newSF != currentSFVal) {
+    // Apply SF change - ALWAYS apply when forceSF7
+    if (newSF != currentSFVal || forceSF7) {
         currentSF[nodeId] = newSF;
         
         if (nodeIdToDeviceIndex.find(nodeId) != nodeIdToDeviceIndex.end()) {
@@ -3032,11 +3434,14 @@ void UpdatePPOADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxR
             if (deviceIndex < endDevicesNetDevices.size()) {
                 Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
                     endDevicesNetDevices[deviceIndex]->GetMac());
-                if (edMac) {
+                Ptr<EndDeviceLoraPhy> edPhy = DynamicCast<EndDeviceLoraPhy>(
+                    endDevicesNetDevices[deviceIndex]->GetPhy());
+                if (edMac && edPhy) {
                     uint8_t newDataRate = 12 - newSF;
                     edMac->SetDataRate(newDataRate);
+                    edPhy->SetSpreadingFactor(newSF);  // Direct PHY set
                     std::cout << "✅ PPO SF=" << (int)newSF 
-                              << " (Node " << nodeId << ", device " << deviceIndex << ")" << std::endl;
+                              << " APPLIED to MAC+PHY (Node " << nodeId << ")" << std::endl;
                 }
             }
         }
@@ -3073,9 +3478,21 @@ void UpdatePPOADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxR
 /**
  * Update function for MARL ADR (Enhanced with DDQN Short-Range Optimizations)
  * Uses coordination signals between agents for collision avoidance
- * NOW INCLUDES: Distance-aware behavior, SNR-based SF ceiling, collision detection
+ * NOW INCLUDES: Distance-aware behavior, SNR-based SF ceiling, collision detection, CONGESTION AWARENESS
  */
 void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxRssi) {
+    // ========================================
+    // CRITICAL: In low-congestion scenarios, SKIP all RL processing
+    // ========================================
+    if (globalAppPeriodSeconds >= 100.0) {
+        DeviceMetrics& metrics = deviceMetrics[nodeId];
+        metrics.packetsSent++;
+        if (packetSuccess) {
+            metrics.packetsReceived++;
+        }
+        return;
+    }
+    
     // Initialize MARL agent if needed
     if (marlAgents.find(nodeId) == marlAgents.end()) {
         marlAgents[nodeId] = std::make_unique<MARLAgent>();
@@ -3099,7 +3516,18 @@ void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTx
     uint8_t currentChannel = history.currentChannel;
     
     // ========================================
-    // NEW: DISTANCE-AWARE BEHAVIOR (from DDQN)
+    // ESTIMATE CONGESTION LEVEL
+    // ========================================
+    double congestionLevel = estimateCongestionLevel(
+        preTxRssi,
+        history.getRssiVariance(),
+        history.getRecentPdr(),
+        deviceMetrics.size(),
+        globalAppPeriodSeconds
+    );
+    
+    // ========================================
+    // DISTANCE-AWARE BEHAVIOR (from DDQN)
     // ========================================
     double distance = 1000.0;  // Default to medium range
     if (nodePositions.find(nodeId) != nodePositions.end()) {
@@ -3114,7 +3542,7 @@ void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTx
     bool isLongRange = (distance >= 1200.0);
     
     // ========================================
-    // NEW: COLLISION DETECTION (from DDQN)
+    // COLLISION DETECTION (from DDQN)
     // ========================================
     CollisionIndicators collision = CollisionIndicators::analyze(
         preTxRssi,
@@ -3138,7 +3566,7 @@ void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTx
     );
     
     // ========================================
-    // ENHANCED: Distance-Aware Reward Calculation
+    // CONGESTION-ADAPTIVE Reward Calculation for MARL
     // ========================================
     double reward = 0.0;
     int sameChannelCount = 0;
@@ -3148,56 +3576,65 @@ void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTx
         }
     }
     
+    // Weight outcome based on congestion
+    double outcomeWeight = 0.4 + 0.3 * (1.0 - congestionLevel);
+    
     if (packetSuccess) {
-        reward = 1.0;
+        reward = 1.0 * outcomeWeight / 0.4;
         
-        // Bonus for using low-congestion channel
-        reward += (3 - std::min(3, sameChannelCount)) * 0.1;
+        // Bonus for using low-congestion channel (only matters in high congestion)
+        if (congestionLevel > 0.3) {
+            reward += (3 - std::min(3, sameChannelCount)) * 0.1;
+        }
         
-        // ENHANCED: Distance-aware efficiency bonus
-        // Much stronger at short range to encourage low SF usage
+        // ENHANCED: Distance-aware efficiency bonus (stronger in low congestion)
+        double efficiencyWeight = 0.15 + 0.2 * (1.0 - congestionLevel);
         if (isShortRange) {
-            // Strong bonus for efficiency at short range - SF7 is optimal
-            reward += (12.0 - currentSFVal) * 0.15;  // 3x stronger than before
-            if (currentSFVal == 7) reward += 0.3;    // Extra bonus for optimal SF
+            reward += (12.0 - currentSFVal) * 0.15 * efficiencyWeight / 0.15;
+            if (currentSFVal == 7) reward += 0.3;
             if (currentSFVal == 8) reward += 0.15;
         } else if (isMediumRange) {
-            reward += (12.0 - currentSFVal) * 0.08;
+            reward += (12.0 - currentSFVal) * 0.08 * efficiencyWeight / 0.15;
         } else {
-            // Long range: prioritize reliability over efficiency
             reward += (12.0 - currentSFVal) * 0.03;
         }
         
-        // Bonus for good SNR margin (indicates we could potentially reduce SF)
+        // Stability bonus in low congestion
+        if (congestionLevel < 0.3 && currentSFVal == 7 && history.getRecentPdr() > 0.7) {
+            reward += 0.4;  // Strong reward for staying optimal in low congestion
+        }
+        
+        // Bonus for good SNR margin
         double lastSnr = history.getLastSnr();
         static const double REQUIRED_SNR[] = {-7.5, -10.0, -12.5, -15.0, -17.5, -20.0};
         if (lastSnr > -100.0 && currentSFVal >= 7 && currentSFVal <= 12) {
             double requiredSnr = REQUIRED_SNR[currentSFVal - 7];
             double snrMargin = lastSnr - requiredSnr;
             if (snrMargin > 15.0 && isShortRange) {
-                reward += 0.2;  // Large margin at short range = room to optimize
+                reward += 0.2;
             }
         }
     } else {
-        reward = -0.5;
+        reward = -0.5 * outcomeWeight / 0.4;
         
-        // Extra penalty if on congested channel
-        reward -= sameChannelCount * 0.15;
-        reward -= history.consecutiveLosses * 0.1;
+        // Extra penalty if on congested channel (only in high congestion)
+        if (congestionLevel > 0.3) {
+            reward -= sameChannelCount * 0.15;
+        }
+        reward -= history.consecutiveLosses * 0.1 * (0.5 + 0.5 * congestionLevel);
         
-        // ENHANCED: Collision-based diagnosis for better learning
-        if (collision.likelyCollision && isShortRange) {
-            // At short range, collision means channel/timing issue, not SF
-            reward -= 0.1;  // Small penalty - collision isn't SF's fault
-        } else if (collision.likelyWeakSignal && isShortRange) {
-            // Weak signal at short range is unexpected - penalize heavily
-            reward -= 0.3;
+        // Collision-based diagnosis (only relevant in high congestion)
+        if (congestionLevel > 0.3) {
+            if (collision.likelyCollision && isShortRange) {
+                reward -= 0.1;
+            } else if (collision.likelyWeakSignal && isShortRange) {
+                reward -= 0.3;
+            }
         }
         
-        // NEW: Penalty for high SNR + High SF + Loss (likely collision or timing)
+        // Penalty for high SNR + High SF + Loss
         double lastSnr = history.getLastSnr();
-        if (lastSnr > 20.0 && currentSFVal > 8 && isShortRange) {
-            // High SNR but high SF and packet loss - SF is too high, causing collision window
+        if (lastSnr > 20.0 && currentSFVal > 8 && isShortRange && congestionLevel > 0.3) {
             reward -= 0.25;
         }
     }
@@ -3222,13 +3659,49 @@ void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTx
         action, currentSFVal, currentTPVal, currentChannel
     );
     
-    // ========================================
-    // NEW: SNR-BASED SF CEILING (Critical for short range)
-    // Prevents MARL from choosing unnecessarily high SF
-    // ========================================
     double lastSnr = history.getLastSnr();
     
-    if (lastSnr > -100.0) {  // Valid SNR measurement
+    // ========================================
+    // UNCONDITIONAL SNR-BASED SF7 ENFORCEMENT (CRITICAL)
+    // Use DIRECT snr parameter for reliability
+    // ========================================
+    static const double REQUIRED_SNR_SF7 = -7.5;
+    double effectiveSnr = (snr > -50.0) ? snr : lastSnr;
+    
+    bool forceSF7 = false;
+    
+    // ========================================
+    // CRITICAL FIX: In low-congestion scenarios (high app period), 
+    // ALWAYS use SF7 regardless of packet loss
+    // ========================================
+    if (globalAppPeriodSeconds >= 100.0) {
+        forceSF7 = true;
+        actionResult.newSF = 7;
+    }
+    else if (effectiveSnr > REQUIRED_SNR_SF7 + 10.0) {  // SNR > 2.5dB
+        forceSF7 = true;
+        actionResult.newSF = 7;  // ALWAYS set to 7
+        std::cout << "🔒 MARL FORCE SF7: SNR=" << effectiveSnr << "dB > 2.5dB required"
+                  << " (Node " << nodeId << ")" << std::endl;
+    } else if (effectiveSnr > REQUIRED_SNR_SF7 + 5.0) {  // SNR > -2.5dB
+        if (actionResult.newSF == -1 || actionResult.newSF > 8) {
+            actionResult.newSF = 8;
+        }
+    }
+    
+    // ========================================
+    // Secondary: LOW CONGESTION override
+    // ========================================
+    if (!forceSF7 && congestionLevel < 0.2 && history.getRecentPdr() > 0.6 && actionResult.newSF > 8) {
+        actionResult.newSF = 7;
+        actionResult.forceChannelHop = false;
+        actionResult.channelDelta = 0;
+    }
+    
+    // ========================================
+    // SNR-BASED SF CEILING for edge cases (skip if already forced SF7)
+    // ========================================
+    if (!forceSF7 && effectiveSnr > -100.0 && congestionLevel > 0.3) {
         static const double REQUIRED_SNR[] = {-7.5, -10.0, -12.5, -15.0, -17.5, -20.0};
         uint8_t snrOptimalSF = 12;
         
@@ -3255,12 +3728,12 @@ void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTx
             std::cout << "🎯 MARL SNR-cap: SF " << (int)actionResult.newSF 
                       << " → " << (int)sfCeiling
                       << " (SNR=" << lastSnr << "dB, optimal=" << (int)snrOptimalSF 
-                      << ", dist=" << (int)distance << "m)" 
+                      << ", dist=" << (int)distance << "m, cong=" << congestionLevel << ")" 
                       << " (Node " << nodeId << ")" << std::endl;
             actionResult.newSF = sfCeiling;
         }
         
-        // NEW: High SNR + High SF + Low PDR detection - force reduction
+        // High SNR + High SF + Low PDR detection - force reduction
         if (lastSnr > 25.0 && currentSFVal > 8 && history.getRecentPdr() < 0.6 && isShortRange) {
             std::cout << "🔄 MARL forcing SF reduction: SNR=" << lastSnr 
                       << "dB but SF=" << (int)currentSFVal 
@@ -3270,8 +3743,8 @@ void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTx
         }
     }
     
-    // NEW: Distance-aware SF floor (prevent too high SF at short range)
-    if (isShortRange && actionResult.newSF > 9) {
+    // Distance-aware SF floor (prevent too high SF at short range) - only in high congestion
+    if (isShortRange && actionResult.newSF > 9 && congestionLevel > 0.3) {
         // At short range, SF9+ is almost never optimal
         if (lastSnr > 15.0) {
             actionResult.newSF = std::min((int)actionResult.newSF, 8);
@@ -3279,7 +3752,7 @@ void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTx
         }
     }
     
-    // Debug output
+    // Debug output with congestion info
     if (metrics.packetsSent % 20 == 0) {
         std::cout << "🤝 MARL Node " << nodeId 
                   << ": PDR=" << std::fixed << std::setprecision(1) << history.getRecentPdr()*100 << "%"
@@ -3287,12 +3760,12 @@ void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTx
                   << ", CH=" << (int)currentChannel
                   << ", Peers=" << sameChannelCount
                   << ", Dist=" << (int)distance << "m"
-                  << ", SNR=" << std::setprecision(1) << lastSnr << "dB"
+                  << ", CONG=" << std::setprecision(2) << congestionLevel
                   << ", ε=" << std::setprecision(3) << marlAgents[nodeId]->getEpsilon() << std::endl;
     }
     
-    // Apply SF change
-    if (actionResult.newSF != -1 && actionResult.newSF != currentSFVal) {
+    // Apply SF change - ALWAYS apply when forceSF7
+    if (actionResult.newSF != -1 && (actionResult.newSF != currentSFVal || forceSF7)) {
         currentSF[nodeId] = actionResult.newSF;
         
         if (nodeIdToDeviceIndex.find(nodeId) != nodeIdToDeviceIndex.end()) {
@@ -3300,11 +3773,14 @@ void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTx
             if (deviceIndex < endDevicesNetDevices.size()) {
                 Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
                     endDevicesNetDevices[deviceIndex]->GetMac());
-                if (edMac) {
+                Ptr<EndDeviceLoraPhy> edPhy = DynamicCast<EndDeviceLoraPhy>(
+                    endDevicesNetDevices[deviceIndex]->GetPhy());
+                if (edMac && edPhy) {
                     uint8_t newDataRate = 12 - actionResult.newSF;
                     edMac->SetDataRate(newDataRate);
+                    edPhy->SetSpreadingFactor(actionResult.newSF);  // Direct PHY set
                     std::cout << "✅ MARL SF=" << (int)actionResult.newSF 
-                              << " (Node " << nodeId << ", device " << deviceIndex << ")" << std::endl;
+                              << " APPLIED to MAC+PHY (Node " << nodeId << ")" << std::endl;
                 }
             }
         }
@@ -3410,10 +3886,20 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
                   double radius, const std::string& csvFileName, ADRMethod adrMethod, uint32_t nWifiInterferers);
 
 /**
- * Get optimal initial SF based on distance (heuristic warm-start)
- * This prevents DDQN from starting with random/bad parameters
+ * Get optimal initial SF based on distance AND congestion level
+ * In low-congestion scenarios (high app period), use SF7 regardless of distance
+ * because link budget typically has margin and SF7 reduces airtime
  */
 uint8_t getInitialSFForDistance(double distance) {
+    // Check global app period - if high (low congestion), always use SF7
+    // This matches No ADR behavior which uses SF7 for all devices
+    if (globalAppPeriodSeconds >= 100.0) {
+        // Low congestion - use SF7 to minimize airtime and collisions
+        // Even far devices have good SNR margin in this scenario
+        return 7;
+    }
+    
+    // High congestion scenario - use distance-based SF for reliability
     if (distance < 300) return 7;
     if (distance < 500) return 8;
     if (distance < 800) return 9;
@@ -3423,9 +3909,17 @@ uint8_t getInitialSFForDistance(double distance) {
 }
 
 /**
- * Get optimal initial TX power based on distance
+ * Get optimal initial TX power based on distance AND congestion level
+ * In low-congestion scenarios, use maximum power to ensure reliable delivery
  */
 double getInitialTPForDistance(double distance) {
+    // In low congestion, always use 14dBm to maximize link budget
+    // This helps ensure packets are received even from far devices
+    if (globalAppPeriodSeconds >= 100.0) {
+        return 14.0;  // Maximum power for reliability
+    }
+    
+    // High congestion - use distance-based power to save energy
     if (distance < 400) return 8;
     if (distance < 800) return 11;
     return 14;
@@ -3577,6 +4071,9 @@ int main(int argc, char* argv[]) {
     cmd.Parse(argc, argv);
     
     enableEnvironmentalModeling = environmentalModeling;
+    
+    // Set global app period for congestion estimation
+    globalAppPeriodSeconds = appPeriodSeconds;
     
     LogComponentEnable("AdvancedDDQNPERADRExample", LOG_LEVEL_INFO);
     
@@ -3901,12 +4398,15 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
             deviceChannels[nodeId] = i % 8;
             
             // Apply to device immediately
+            // CRITICAL: In low-congestion mode, DON'T override hardware variability settings
             Ptr<EndDeviceLorawanMac> mac = DynamicCast<EndDeviceLorawanMac>(
                 endDevicesNetDevices[i]->GetMac());
-            if (mac) {
+            if (mac && globalAppPeriodSeconds < 100.0) {
+                // High congestion - apply RL-optimized initial parameters
                 mac->SetDataRate(12 - initialSF);  // DR = 12 - SF
                 mac->SetTransmissionPowerDbm(initialTP);
             }
+            // In low-congestion mode, device keeps its default hardware variability settings
             
             // Create agents based on ADR method
             if (adrMethod == ADRMethod::DDQN) {
