@@ -25,13 +25,14 @@ class LoRaWANADRAnalyzer:
         """Load all CSV datasets for analysis"""
         print("🔍 Loading LoRaWAN datasets...")
         
-        # Find all device datasets (including PPO and MARL)
+        # Find all device datasets (including PPO, MARL, and HYBRID)
         patterns = {
             'no_adr': 'no_adr_advanced_pre_tx_rssi_dataset_device_*_dataset.csv',
             'classical_adr': 'adr_advanced_pre_tx_rssi_dataset_device_*_dataset.csv',
             'ddqn_adr': 'ddqn_adr_advanced_pre_tx_rssi_dataset_device_*_dataset.csv',
             'ppo_adr': 'ppo_adr_advanced_pre_tx_rssi_dataset_device_*_dataset.csv',
-            'marl_adr': 'marl_adr_advanced_pre_tx_rssi_dataset_device_*_dataset.csv'
+            'marl_adr': 'marl_adr_advanced_pre_tx_rssi_dataset_device_*_dataset.csv',
+            'hybrid_adr': 'hybrid_adr_advanced_pre_tx_rssi_dataset_device_*_dataset.csv'
         }
         
         for adr_type, pattern in patterns.items():
@@ -114,7 +115,7 @@ class LoRaWANADRAnalyzer:
         # Analyze each device for each ADR type
         for device_id in all_devices:
             device_comparison[device_id] = {}
-            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr']:
+            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr', 'hybrid_adr']:
                 stats = self.analyze_device_performance(device_id, adr_type)
                 if stats:
                     all_stats.append(stats)
@@ -142,7 +143,7 @@ class LoRaWANADRAnalyzer:
         print("\n📊 OVERALL PERFORMANCE BY ADR TYPE:")
         print("-" * 50)
         
-        for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr']:
+        for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr', 'hybrid_adr']:
             if adr_type in adr_summary.index:
                 row = adr_summary.loc[adr_type]
                 adr_name = {
@@ -150,7 +151,8 @@ class LoRaWANADRAnalyzer:
                     'classical_adr': 'Classical ADR', 
                     'ddqn_adr': 'DDQN-PER ADR',
                     'ppo_adr': 'PPO ADR',
-                    'marl_adr': 'MARL ADR'
+                    'marl_adr': 'MARL ADR',
+                    'hybrid_adr': 'HYBRID ADR'
                 }[adr_type]
                 
                 print(f"\n{adr_name}:")
@@ -190,7 +192,7 @@ class LoRaWANADRAnalyzer:
             print(f"\n{'ADR Method':<15} {'PDR (%)':<8} {'Avg SNR':<10} {'TX Power':<10} {'SF':<5} {'Energy (mJ)':<12}")
             print("-" * 70)
             
-            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr']:
+            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr', 'hybrid_adr']:
                 if adr_type in device_data:
                     stats = device_data[adr_type]
                     adr_name = {
@@ -198,7 +200,8 @@ class LoRaWANADRAnalyzer:
                         'classical_adr': 'Classical ADR',
                         'ddqn_adr': 'DDQN-PER ADR',
                         'ppo_adr': 'PPO ADR',
-                        'marl_adr': 'MARL ADR'
+                        'marl_adr': 'MARL ADR',
+                        'hybrid_adr': 'HYBRID ADR'
                     }[adr_type]
                     
                     print(f"{adr_name:<15} {stats['pdr']:<8.1f} {stats['avg_snr']:<10.1f} "
@@ -245,7 +248,8 @@ class LoRaWANADRAnalyzer:
             'classical_adr': 'Classical ADR',
             'ddqn_adr': 'DDQN-PER ADR',
             'ppo_adr': 'PPO ADR',
-            'marl_adr': 'MARL ADR'
+            'marl_adr': 'MARL ADR',
+            'hybrid_adr': 'HYBRID ADR'
         }
         df_stats['adr_type_label'] = df_stats['adr_type'].map(adr_mapping)
         
@@ -256,7 +260,7 @@ class LoRaWANADRAnalyzer:
         axes[0,0].tick_params(axis='x', rotation=45)
         
         # 2. SNR vs Distance scatter plot
-        colors = {'No ADR': 'blue', 'Classical ADR': 'orange', 'DDQN-PER ADR': 'green', 'PPO ADR': 'red', 'MARL ADR': 'purple'}
+        colors = {'No ADR': 'blue', 'Classical ADR': 'orange', 'DDQN-PER ADR': 'green', 'PPO ADR': 'red', 'MARL ADR': 'purple', 'HYBRID ADR': 'brown'}
         for adr_type in df_stats['adr_type_label'].unique():
             data = df_stats[df_stats['adr_type_label'] == adr_type]
             axes[0,1].scatter(data['distance'], data['avg_snr'], 
