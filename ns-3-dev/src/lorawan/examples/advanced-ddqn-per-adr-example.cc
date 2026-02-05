@@ -2179,505 +2179,6 @@ std::map<uint32_t, std::unique_ptr<MARLAgent>> marlAgents;
 std::map<uint32_t, uint8_t> deviceChannels;
 
 // ============================================================================
-// HYBRID MARL-CLASSICAL ADR AGENT
-// Combines Classical ADR's proven SNR-margin algorithm with RL coordination
-// ============================================================================
-
-/**
- * Classical ADR Parameters (from ns-3 adr-component.cc)
- * These are the SNR thresholds required for each spreading factor
- */
-struct ClassicalADRParams {
-    // Required SNR for demodulation (dB) - from LoRaWAN specification
-    static constexpr double threshold[6] = {-20.0, -17.5, -15.0, -12.5, -10.0, -7.5};  // SF12 to SF7
-    static constexpr int min_sf = 7;
-    static constexpr int max_sf = 12;
-    static constexpr double min_txPower = 2.0;   // dBm
-    static constexpr double max_txPower = 14.0;  // dBm
-    static constexpr int historyRange = 4;       // Number of packets to average
-    static constexpr int B = 125000;             // Bandwidth (Hz)
-    static constexpr int NF = 6;                 // Noise Figure (dB)
-    
-    /**
-     * Convert SF to Data Rate (DR)
-     */
-    static uint8_t sfToDr(uint8_t sf) {
-        return (sf >= 7 && sf <= 12) ? (12 - sf) : 5;
-    }
-    
-    /**
-     * Convert DR to SF
-     */
-    static uint8_t drToSf(uint8_t dr) {
-        return (dr <= 5) ? (12 - dr) : 7;
-    }
-    
-    /**
-     * Get required SNR for a given SF
-     */
-    static double getRequiredSNR(uint8_t sf) {
-        if (sf < 7 || sf > 12) return threshold[5];  // Default to SF7 requirement
-        return threshold[12 - sf];  // threshold[0]=SF12, threshold[5]=SF7
-    }
-};
-
-/**
- * Hybrid MARL-Classical ADR Agent
- * 
- * This agent combines:
- * 1. Classical ADR's SNR-margin algorithm as the BASELINE decision
- * 2. RL-based ADJUSTMENT for collision avoidance and channel selection
- * 3. Multi-agent coordination signals
- * 
- * The key insight is that Classical ADR handles SF/TP optimization well,
- * but RL can help with:
- * - Channel selection to avoid collisions
- * - Timing adjustments
- * - Faster adaptation to changing conditions
- */
-class HybridMARLClassicalAgent {
-private:
-    // RL components for coordination and adjustment
-    DuelingQNetwork mainNetwork, targetNetwork;
-    PrioritizedReplayBuffer replayBuffer;
-    
-    double epsilon, epsilonDecay, epsilonMin;
-    double gamma;
-    int targetUpdateFreq, updateCounter;
-    
-    std::mt19937 rng;
-    
-    // SNR history for Classical ADR (sliding window)
-    std::deque<double> snrHistory;
-    static const size_t SNR_HISTORY_SIZE = 6;  // Slightly larger than Classical ADR's 4
-    
-    // Performance tracking
-    double cumulativeReward = 0.0;
-    int successCount = 0;
-    int totalCount = 0;
-    
-    // Adjustment bounds (RL can only adjust within these limits)
-    static const int MAX_SF_ADJUSTMENT = 1;   // RL can adjust SF by at most ±1 from Classical ADR
-    static const int MAX_TP_ADJUSTMENT = 2;   // RL can adjust TP by at most ±2 dBm
-    
-public:
-    HybridMARLClassicalAgent(double lr = 0.0005, double eps = 0.2, double epsDecay = 0.999,
-                             double epsMin = 0.02, double g = 0.95, int targetFreq = 50)
-        : mainNetwork(lr), targetNetwork(lr), replayBuffer(20000),
-          epsilon(eps), epsilonDecay(epsDecay), epsilonMin(epsMin), gamma(g),
-          targetUpdateFreq(targetFreq), updateCounter(0), rng(std::random_device{}())
-    {
-        targetNetwork.copyFrom(mainNetwork);
-    }
-    
-    /**
-     * Add SNR observation to history (for Classical ADR calculation)
-     */
-    void addSnrObservation(double snr) {
-        snrHistory.push_back(snr);
-        while (snrHistory.size() > SNR_HISTORY_SIZE) {
-            snrHistory.pop_front();
-        }
-    }
-    
-    /**
-     * Get average SNR (Classical ADR uses average of last N packets)
-     */
-    double getAverageSNR() const {
-        if (snrHistory.empty()) return -20.0;  // Default poor SNR
-        double sum = 0.0;
-        for (double s : snrHistory) sum += s;
-        return sum / snrHistory.size();
-    }
-    
-    /**
-     * Get minimum SNR (for conservative decisions)
-     */
-    double getMinSNR() const {
-        if (snrHistory.empty()) return -20.0;
-        return *std::min_element(snrHistory.begin(), snrHistory.end());
-    }
-    
-    /**
-     * CLASSICAL ADR IMPLEMENTATION (based on ns-3 adr-component.cc)
-     * 
-     * Algorithm:
-     * 1. Compute SNR margin = average_SNR - required_SNR_for_current_SF
-     * 2. Calculate steps = floor(margin / 3)
-     * 3. If steps > 0: decrease SF (increase DR), then decrease TP
-     * 4. If steps < 0: increase TP (SF is NOT increased - device handles that)
-     */
-    std::pair<uint8_t, double> computeClassicalADR(uint8_t currentSF, double currentTP) {
-        // Use average SNR from history (like Classical ADR)
-        double avgSNR = getAverageSNR();
-        
-        // Get required SNR for current SF
-        double requiredSNR = ClassicalADRParams::getRequiredSNR(currentSF);
-        
-        // Compute margin
-        double margin = avgSNR - requiredSNR;
-        
-        // Calculate adjustment steps (3 dB per step)
-        int steps = static_cast<int>(std::floor(margin / 3.0));
-        
-        uint8_t newSF = currentSF;
-        double newTP = currentTP;
-        
-        // Positive steps: decrease SF first, then decrease TP
-        while (steps > 0 && newSF > ClassicalADRParams::min_sf) {
-            newSF--;
-            steps--;
-        }
-        while (steps > 0 && newTP > ClassicalADRParams::min_txPower) {
-            newTP -= 2.0;
-            steps--;
-        }
-        
-        // Negative steps: increase TP (Classical ADR doesn't increase SF from server)
-        // But we'll allow SF increase for better reliability
-        while (steps < 0 && newTP < ClassicalADRParams::max_txPower) {
-            newTP += 2.0;
-            steps++;
-        }
-        // If still negative margin after max TP, consider SF increase
-        while (steps < 0 && newSF < ClassicalADRParams::max_sf) {
-            newSF++;
-            steps++;
-        }
-        
-        return {newSF, newTP};
-    }
-    
-    /**
-     * RL ADJUSTMENT ACTION SPACE
-     * 
-     * Actions represent ADJUSTMENTS to Classical ADR's decision:
-     * 0: No adjustment (trust Classical ADR)
-     * 1: SF -1 (more aggressive)
-     * 2: SF +1 (more conservative)
-     * 3: TP -2 dBm
-     * 4: TP +2 dBm
-     * 5-12: Channel change to channel 0-7
-     * 13: SF -1 + Channel change
-     * 14: SF +1 + Channel change
-     * 15: Trust Classical + prioritize channel change
-     */
-    static const int NUM_ADJUSTMENT_ACTIONS = 16;
-    
-    struct AdjustmentAction {
-        int sfDelta;           // -1, 0, or +1
-        int tpDelta;           // -2, 0, or +2 dBm
-        int targetChannel;     // -1 for no change, 0-7 for specific channel
-        bool forceChannelHop;  // True to force intelligent channel selection
-        
-        static AdjustmentAction decode(int action) {
-            AdjustmentAction result = {0, 0, -1, false};
-            
-            switch (action) {
-                case 0:  // No adjustment
-                    break;
-                case 1:  // SF -1
-                    result.sfDelta = -1;
-                    break;
-                case 2:  // SF +1
-                    result.sfDelta = +1;
-                    break;
-                case 3:  // TP -2
-                    result.tpDelta = -2;
-                    break;
-                case 4:  // TP +2
-                    result.tpDelta = +2;
-                    break;
-                case 5: case 6: case 7: case 8:
-                case 9: case 10: case 11: case 12:
-                    result.targetChannel = action - 5;
-                    break;
-                case 13:  // SF -1 + channel hop
-                    result.sfDelta = -1;
-                    result.forceChannelHop = true;
-                    break;
-                case 14:  // SF +1 + channel hop
-                    result.sfDelta = +1;
-                    result.forceChannelHop = true;
-                    break;
-                case 15:  // Trust Classical + channel hop
-                    result.forceChannelHop = true;
-                    break;
-            }
-            return result;
-        }
-    };
-    
-    /**
-     * Build state vector including Classical ADR recommendation
-     */
-    std::vector<double> buildState(
-        const DeviceHistory& history,
-        uint8_t currentSF,
-        double currentTP,
-        uint8_t currentChannel,
-        double currentTime,
-        uint32_t nodeId,
-        const std::map<uint32_t, DeviceHistory>& allHistories,
-        const std::map<uint32_t, uint8_t>& allChannels,
-        uint8_t classicalSF,    // Classical ADR's SF recommendation
-        double classicalTP)      // Classical ADR's TP recommendation
-    {
-        double timeSinceLastSuccess = currentTime - history.lastSuccessTime;
-        
-        // Count devices on same channel
-        int sameChannelCount = 0;
-        double avgOtherPdr = 0.0;
-        int otherCount = 0;
-        
-        for (const auto& kv : allChannels) {
-            if (kv.first != nodeId && kv.second == currentChannel) {
-                sameChannelCount++;
-            }
-        }
-        
-        for (const auto& kv : allHistories) {
-            if (kv.first != nodeId) {
-                avgOtherPdr += kv.second.getRecentPdr();
-                otherCount++;
-            }
-        }
-        if (otherCount > 0) avgOtherPdr /= otherCount;
-        
-        // Compute Classical ADR's recommendation delta
-        int sfDelta = (int)classicalSF - (int)currentSF;
-        double tpDelta = classicalTP - currentTP;
-        
-        return {
-            // Link quality indicators
-            std::max(0.0, std::min(1.0, (history.getLastSnr() + 20.0) / 50.0)),
-            std::max(0.0, std::min(1.0, (history.getSnrTrend() + 5.0) / 10.0)),
-            std::max(0.0, std::min(1.0, (getAverageSNR() + 20.0) / 50.0)),
-            
-            // Performance indicators
-            history.getRecentPdr(),
-            std::max(0.0, std::min(1.0, (history.getPdrTrend() + 0.5) / 1.0)),
-            std::max(0.0, std::min(1.0, history.consecutiveLosses / 5.0)),
-            
-            // Current state
-            (currentSF - 7.0) / 5.0,
-            (currentTP - 2.0) / 12.0,
-            currentChannel / 7.0,
-            
-            // Classical ADR recommendation (as delta from current)
-            (sfDelta + 5.0) / 10.0,  // Normalized: -5 to +5 -> 0 to 1
-            (tpDelta + 12.0) / 24.0, // Normalized: -12 to +12 -> 0 to 1
-            
-            // Coordination features
-            std::min(1.0, sameChannelCount / 3.0)  // Collision risk
-        };
-    }
-    
-    /**
-     * Select RL adjustment action
-     */
-    int selectAdjustmentAction(const std::vector<double>& state, uint8_t currentChannel,
-                                const std::map<uint32_t, uint8_t>& allChannels, uint32_t nodeId,
-                                double recentPdr) {
-        std::uniform_real_distribution<double> dist(0.0, 1.0);
-        
-        // If Classical ADR is working well (high PDR), trust it more
-        if (recentPdr > 0.8) {
-            // High PDR - mostly trust Classical ADR
-            if (dist(rng) < 0.9) {
-                return 0;  // No adjustment
-            }
-        }
-        
-        // Count congestion on each channel
-        std::vector<int> channelCounts(8, 0);
-        for (const auto& kv : allChannels) {
-            if (kv.first != nodeId) {
-                channelCounts[kv.second]++;
-            }
-        }
-        
-        // If current channel is congested, bias toward channel change
-        if (channelCounts[currentChannel] >= 2 && dist(rng) < 0.4) {
-            // Find least congested channel
-            int leastCongested = 0;
-            for (int i = 1; i < 8; i++) {
-                if (channelCounts[i] < channelCounts[leastCongested]) {
-                    leastCongested = i;
-                }
-            }
-            return 5 + leastCongested;  // Channel change action
-        }
-        
-        // Epsilon-greedy for exploration
-        if (dist(rng) < epsilon) {
-            std::uniform_int_distribution<int> actionDist(0, NUM_ADJUSTMENT_ACTIONS - 1);
-            return actionDist(rng);
-        }
-        
-        // Exploitation: use Q-network
-        std::vector<double> qValues = mainNetwork.forward(state);
-        
-        // Only consider first NUM_ADJUSTMENT_ACTIONS values
-        auto maxIt = std::max_element(qValues.begin(), qValues.begin() + NUM_ADJUSTMENT_ACTIONS);
-        return std::distance(qValues.begin(), maxIt);
-    }
-    
-    /**
-     * Apply RL adjustment to Classical ADR decision
-     */
-    std::tuple<uint8_t, double, uint8_t, bool> applyAdjustment(
-        uint8_t classicalSF, double classicalTP, uint8_t currentChannel,
-        int adjustmentAction, const std::map<uint32_t, uint8_t>& allChannels, uint32_t nodeId)
-    {
-        auto adj = AdjustmentAction::decode(adjustmentAction);
-        
-        // Apply SF adjustment (bounded)
-        int newSF = (int)classicalSF + adj.sfDelta;
-        newSF = std::max((int)ClassicalADRParams::min_sf, std::min((int)ClassicalADRParams::max_sf, newSF));
-        
-        // Apply TP adjustment (bounded)
-        double newTP = classicalTP + adj.tpDelta;
-        newTP = std::max(ClassicalADRParams::min_txPower, std::min(ClassicalADRParams::max_txPower, newTP));
-        
-        // Handle channel selection
-        uint8_t newChannel = currentChannel;
-        bool channelChanged = false;
-        
-        if (adj.targetChannel >= 0) {
-            newChannel = adj.targetChannel;
-            channelChanged = true;
-        } else if (adj.forceChannelHop) {
-            // Find least congested channel
-            std::vector<int> channelCounts(8, 0);
-            for (const auto& kv : allChannels) {
-                if (kv.first != nodeId) {
-                    channelCounts[kv.second]++;
-                }
-            }
-            int leastCongested = 0;
-            for (int i = 1; i < 8; i++) {
-                if (channelCounts[i] < channelCounts[leastCongested]) {
-                    leastCongested = i;
-                }
-            }
-            if (leastCongested != currentChannel) {
-                newChannel = leastCongested;
-                channelChanged = true;
-            }
-        }
-        
-        return {(uint8_t)newSF, newTP, newChannel, channelChanged};
-    }
-    
-    /**
-     * Calculate reward for Hybrid agent
-     * Rewards:
-     * - Following Classical ADR when it works (stability)
-     * - Making adjustments that improve PDR
-     * - Successful channel changes that avoid collisions
-     */
-    double calculateReward(bool packetSuccess, double pdrImprovement, int adjustmentAction,
-                          bool classicalWouldSucceed, double congestionLevel) {
-        double reward = 0.0;
-        
-        // Base outcome reward
-        if (packetSuccess) {
-            reward += 50.0;
-            
-            // Bonus for PDR improvement
-            if (pdrImprovement > 0.05) {
-                reward += pdrImprovement * 100.0;
-            }
-        } else {
-            reward -= 30.0;
-        }
-        
-        // Trust reward: if we followed Classical ADR (action 0) and succeeded
-        if (adjustmentAction == 0 && packetSuccess) {
-            reward += 20.0;  // Bonus for trusting Classical when it works
-        }
-        
-        // Adjustment reward: if we adjusted and it helped
-        if (adjustmentAction != 0 && packetSuccess && !classicalWouldSucceed) {
-            reward += 40.0;  // RL improved on Classical ADR
-        }
-        
-        // Penalty for unnecessary adjustments
-        if (adjustmentAction != 0 && !packetSuccess) {
-            reward -= 15.0;  // Adjustment didn't help
-        }
-        
-        // Channel change reward in high congestion
-        if (congestionLevel > 0.3 && adjustmentAction >= 5 && adjustmentAction <= 15) {
-            if (packetSuccess) {
-                reward += 25.0;  // Channel change helped
-            }
-        }
-        
-        return reward;
-    }
-    
-    void addExperience(const std::vector<double>& state, int action, double reward,
-                      const std::vector<double>& nextState, bool done) {
-        Experience exp(state, action, reward, nextState, done);
-        replayBuffer.add(exp);
-    }
-    
-    void train(size_t batchSize = 32) {
-        if (replayBuffer.size() < batchSize * 2) return;
-        
-        std::vector<size_t> indices;
-        std::vector<double> weights;
-        auto batch = replayBuffer.sample(batchSize, indices, weights);
-        
-        std::vector<double> tdErrors;
-        
-        for (size_t i = 0; i < batch.size(); i++) {
-            auto& exp = batch[i];
-            
-            std::vector<double> currentQ = mainNetwork.forward(exp.state);
-            std::vector<double> nextQ = mainNetwork.forward(exp.nextState);
-            std::vector<double> nextQTarget = targetNetwork.forward(exp.nextState);
-            
-            int bestAction = std::distance(nextQ.begin(), 
-                std::max_element(nextQ.begin(), nextQ.begin() + NUM_ADJUSTMENT_ACTIONS));
-            double target = exp.reward + (exp.done ? 0.0 : gamma * nextQTarget[bestAction]);
-            
-            double tdError = std::abs(target - currentQ[exp.action]);
-            tdErrors.push_back(tdError);
-        }
-        
-        replayBuffer.updatePriorities(indices, tdErrors);
-        
-        updateCounter++;
-        if (updateCounter % targetUpdateFreq == 0) {
-            targetNetwork.copyFrom(mainNetwork);
-        }
-        
-        epsilon = std::max(epsilonMin, epsilon * epsilonDecay);
-    }
-    
-    void updateStats(bool success) {
-        totalCount++;
-        if (success) successCount++;
-    }
-    
-    double getSuccessRate() const {
-        return totalCount > 0 ? (double)successCount / totalCount : 0.0;
-    }
-    
-    double getEpsilon() const { return epsilon; }
-    
-    void increaseExploration() {
-        epsilon = std::min(0.5, epsilon + 0.2);
-    }
-};
-
-// Global Hybrid MARL-Classical agents map
-std::map<uint32_t, std::unique_ptr<HybridMARLClassicalAgent>> hybridAgents;
-
-// ============================================================================
 // ENHANCED ENVIRONMENT & SIMULATION LOGIC
 // ============================================================================
 
@@ -2725,7 +2226,7 @@ std::map<uint32_t, uint32_t> deviceFrameCounters;
 
 // Global simulation parameters
 Ptr<LoraChannel> globalChannel;
-enum class ADRMethod { OFF, ON, DDQN, PPO, MARL, HYBRID };
+enum class ADRMethod { OFF, ON, DDQN, PPO, MARL };
 ADRMethod currentADRMethod = ADRMethod::OFF;
 
 // Global references for ADR functionality
@@ -2762,7 +2263,6 @@ void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess);
 void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double preTxRssi);
 void UpdatePPOADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxRssi);
 void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxRssi);
-void UpdateHybridMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxRssi);
 
 // Forward declarations
 void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess);
@@ -3304,8 +2804,6 @@ void CheckPacketLoss(uint32_t nodeId, double transmissionTime) {
                 UpdatePPOADR(nodeId, -20.0, false, record.preTxRssiDbm);
             } else if (currentADRMethod == ADRMethod::MARL) {
                 UpdateMARLADR(nodeId, -20.0, false, record.preTxRssiDbm);
-            } else if (currentADRMethod == ADRMethod::HYBRID) {
-                UpdateHybridMARLADR(nodeId, -20.0, false, record.preTxRssiDbm);
             }
             // Classical ADR handled automatically by ns-3 AdrComponent
             
@@ -3347,8 +2845,6 @@ void OnPacketReceived(Ptr<const Packet> packet) {
                 UpdatePPOADR(it->nodeId, it->gatewaySnrDb, true, it->preTxRssiDbm);
             } else if (currentADRMethod == ADRMethod::MARL) {
                 UpdateMARLADR(it->nodeId, it->gatewaySnrDb, true, it->preTxRssiDbm);
-            } else if (currentADRMethod == ADRMethod::HYBRID) {
-                UpdateHybridMARLADR(it->nodeId, it->gatewaySnrDb, true, it->preTxRssiDbm);
             }
             // Classical ADR handled automatically by ns-3 AdrComponent
             
@@ -4149,6 +3645,7 @@ void UpdatePPOADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxR
 void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxRssi) {
     // ========================================
     // CRITICAL: In low-congestion scenarios, SKIP all RL processing
+    // FIXED: Use same threshold as PPO/DDQN (100s) instead of 500s
     // ========================================
     if (globalAppPeriodSeconds >= 100.0) {
         DeviceMetrics& metrics = deviceMetrics[nodeId];
@@ -4576,276 +4073,6 @@ void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTx
     previousMARLActions[nodeId] = action;
 }
 
-// ============================================================================
-// HYBRID MARL-CLASSICAL ADR UPDATE FUNCTION
-// Combines Classical ADR's proven reliability with RL coordination
-// ============================================================================
-void UpdateHybridMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxRssi) {
-    // Initialize Hybrid agent if needed
-    if (hybridAgents.find(nodeId) == hybridAgents.end()) {
-        hybridAgents[nodeId] = std::make_unique<HybridMARLClassicalAgent>();
-    }
-    
-    DeviceMetrics& metrics = deviceMetrics[nodeId];
-    DeviceHistory& history = deviceHistories[nodeId];
-    double currentTime = Simulator::Now().GetSeconds();
-    
-    // Update history with new observation
-    history.addRssi(preTxRssi);
-    history.addSnr(snr);
-    history.addPacketResult(packetSuccess, currentTime);
-    
-    // Add SNR to hybrid agent's history for Classical ADR calculation
-    hybridAgents[nodeId]->addSnrObservation(snr);
-    hybridAgents[nodeId]->updateStats(packetSuccess);
-    
-    // Update global channel tracking for coordination
-    deviceChannels[nodeId] = history.currentChannel;
-    
-    // Get current parameters
-    uint8_t currentSFVal = currentSF[nodeId];
-    double currentTPVal = currentTP[nodeId];
-    uint8_t currentChannel = history.currentChannel;
-    
-    // ========================================
-    // STEP 1: COMPUTE CLASSICAL ADR BASELINE
-    // This is the proven algorithm from ns-3's adr-component
-    // ========================================
-    auto [classicalSF, classicalTP] = hybridAgents[nodeId]->computeClassicalADR(currentSFVal, currentTPVal);
-    
-    // ========================================
-    // STEP 2: ESTIMATE CONGESTION LEVEL
-    // ========================================
-    double congestionLevel = estimateCongestionLevel(
-        preTxRssi,
-        history.getRssiVariance(),
-        history.getRecentPdr(),
-        deviceMetrics.size(),
-        globalAppPeriodSeconds
-    );
-    
-    // ========================================
-    // STEP 3: DISTANCE CALCULATION
-    // ========================================
-    double distance = 1000.0;
-    if (nodePositions.find(nodeId) != nodePositions.end()) {
-        Vector nodePos = nodePositions[nodeId];
-        distance = std::sqrt(nodePos.x * nodePos.x + nodePos.y * nodePos.y);
-    }
-    
-    bool isShortRange = (distance < 500.0);
-    bool isMediumRange = (distance >= 500.0 && distance < 1200.0);
-    bool isLongRange = (distance >= 1200.0);
-    
-    // ========================================
-    // STEP 4: COLLISION ANALYSIS
-    // ========================================
-    CollisionIndicators collision = CollisionIndicators::analyze(
-        preTxRssi, snr, packetSuccess, history.getRssiVariance(),
-        history.consecutiveLosses, history.getRecentPdr()
-    );
-    
-    // Collect coordination data
-    std::map<uint32_t, uint8_t> allSFs;
-    for (const auto& kv : currentSF) {
-        allSFs[kv.first] = kv.second;
-    }
-    
-    // ========================================
-    // STEP 5: BUILD STATE FOR RL ADJUSTMENT
-    // ========================================
-    std::vector<double> currentState = hybridAgents[nodeId]->buildState(
-        history, currentSFVal, currentTPVal, currentChannel, currentTime,
-        nodeId, deviceHistories, deviceChannels, classicalSF, classicalTP
-    );
-    
-    // ========================================
-    // STEP 6: SELECT RL ADJUSTMENT ACTION
-    // ========================================
-    int adjustmentAction = hybridAgents[nodeId]->selectAdjustmentAction(
-        currentState, currentChannel, deviceChannels, nodeId, history.getRecentPdr()
-    );
-    
-    // ========================================
-    // STEP 7: APPLY ADJUSTMENT TO CLASSICAL ADR DECISION
-    // ========================================
-    auto [finalSF, finalTP, finalChannel, channelChanged] = hybridAgents[nodeId]->applyAdjustment(
-        classicalSF, classicalTP, currentChannel, adjustmentAction, deviceChannels, nodeId
-    );
-    
-    // ========================================
-    // STEP 8: CALCULATE REWARD AND TRAIN
-    // ========================================
-    // Estimate if Classical ADR alone would have succeeded
-    bool classicalWouldSucceed = (classicalSF == currentSFVal && classicalTP == currentTPVal && packetSuccess);
-    double pdrImprovement = history.getPdrTrend();
-    
-    double reward = hybridAgents[nodeId]->calculateReward(
-        packetSuccess, pdrImprovement, adjustmentAction, classicalWouldSucceed, congestionLevel
-    );
-    
-    // Store experience for training
-    static std::map<uint32_t, std::vector<double>> previousHybridStates;
-    static std::map<uint32_t, int> previousHybridActions;
-    
-    if (previousHybridStates.find(nodeId) != previousHybridStates.end() && metrics.packetsSent >= 2) {
-        hybridAgents[nodeId]->addExperience(
-            previousHybridStates[nodeId], previousHybridActions[nodeId],
-            reward, currentState, false
-        );
-        hybridAgents[nodeId]->train();
-    }
-    
-    // ========================================
-    // STEP 9: APPLY MANDATORY SF CEILING (safety check)
-    // ========================================
-    uint8_t mandatorySFCeiling = getMandatorySFCeiling(snr);
-    if (finalSF > mandatorySFCeiling + 1) {
-        uint8_t correctedSF = mandatorySFCeiling;
-        finalSF = correctedSF;
-        std::cout << "🚨 HYBRID ceiling fix: SF" << (int)currentSFVal << "→SF" << (int)correctedSF 
-                  << " (Node " << nodeId << ")" << std::endl;
-    }
-    
-    // ========================================
-    // STEP 10: DISTANCE-AWARE FLOOR (prevent SF drift)
-    // ========================================
-    if (isShortRange && finalSF > 9) {
-        if (snr > 15.0) {
-            finalSF = std::min(finalSF, (uint8_t)8);
-            std::cout << "🎯 HYBRID short-range cap: SF" << (int)finalSF 
-                      << " (dist=" << (int)distance << "m, SNR=" << snr << ")" << std::endl;
-        }
-    }
-    
-    // ========================================
-    // DEBUG OUTPUT
-    // ========================================
-    if (metrics.packetsSent % 15 == 0) {
-        std::cout << "🔀 HYBRID Node " << nodeId 
-                  << ": ClassicalADR→SF" << (int)classicalSF << "/TP" << classicalTP
-                  << ", RLAdj=" << adjustmentAction
-                  << ", Final→SF" << (int)finalSF << "/TP" << finalTP
-                  << ", PDR=" << std::fixed << std::setprecision(1) << history.getRecentPdr()*100 << "%"
-                  << ", Dist=" << (int)distance << "m"
-                  << ", Cong=" << std::setprecision(2) << congestionLevel
-                  << std::endl;
-    }
-    
-    // ========================================
-    // STEP 11: APPLY SF CHANGE
-    // ========================================
-    if (finalSF != currentSFVal) {
-        currentSF[nodeId] = finalSF;
-        
-        if (nodeIdToDeviceIndex.find(nodeId) != nodeIdToDeviceIndex.end()) {
-            uint32_t deviceIndex = nodeIdToDeviceIndex[nodeId];
-            if (deviceIndex < endDevicesNetDevices.size()) {
-                Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
-                    endDevicesNetDevices[deviceIndex]->GetMac());
-                Ptr<EndDeviceLoraPhy> edPhy = DynamicCast<EndDeviceLoraPhy>(
-                    endDevicesNetDevices[deviceIndex]->GetPhy());
-                if (edMac && edPhy) {
-                    uint8_t newDataRate = 12 - finalSF;
-                    edMac->SetDataRate(newDataRate);
-                    edPhy->SetSpreadingFactor(finalSF);
-                    std::cout << "✅ HYBRID SF=" << (int)finalSF 
-                              << " applied (Node " << nodeId << ")" << std::endl;
-                }
-            }
-        }
-    }
-    
-    // ========================================
-    // STEP 12: APPLY TP CHANGE
-    // ========================================
-    if (std::abs(finalTP - currentTPVal) > 0.5) {
-        double safeTp = std::max(8.0, std::min(14.0, finalTP));  // Conservative floor
-        currentTP[nodeId] = safeTp;
-        nodeTxPowers[nodeId] = safeTp;
-        
-        if (nodeIdToDeviceIndex.find(nodeId) != nodeIdToDeviceIndex.end()) {
-            uint32_t deviceIndex = nodeIdToDeviceIndex[nodeId];
-            if (deviceIndex < endDevicesNetDevices.size()) {
-                Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
-                    endDevicesNetDevices[deviceIndex]->GetMac());
-                if (edMac) {
-                    edMac->SetTransmissionPowerDbm(safeTp);
-                    std::cout << "✅ HYBRID TP=" << safeTp << "dBm (Node " << nodeId << ")" << std::endl;
-                }
-            }
-        }
-    }
-    
-    // ========================================
-    // STEP 13: APPLY CHANNEL CHANGE (if RL recommends)
-    // ========================================
-    if (channelChanged && finalChannel != currentChannel) {
-        history.setChannel(finalChannel);
-        deviceChannels[nodeId] = finalChannel;
-        std::cout << "📡 HYBRID Channel " << (int)currentChannel << "→" << (int)finalChannel
-                  << " (Node " << nodeId << ")" << std::endl;
-    }
-    
-    // ========================================
-    // STEP 14: EMERGENCY RECOVERY
-    // ========================================
-    if (metrics.packetsSent >= 10 && history.getRecentPdr() < 0.25) {
-        if (history.consecutiveLosses > 4) {
-            hybridAgents[nodeId]->increaseExploration();
-            std::cout << "🔄 HYBRID exploration boost (PDR=" << history.getRecentPdr()*100 << "%, Node " 
-                      << nodeId << ")" << std::endl;
-            
-            // If Classical ADR suggests a different SF, trust it completely
-            if (classicalSF != currentSFVal) {
-                currentSF[nodeId] = classicalSF;
-                if (nodeIdToDeviceIndex.find(nodeId) != nodeIdToDeviceIndex.end()) {
-                    uint32_t deviceIndex = nodeIdToDeviceIndex[nodeId];
-                    if (deviceIndex < endDevicesNetDevices.size()) {
-                        Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
-                            endDevicesNetDevices[deviceIndex]->GetMac());
-                        Ptr<EndDeviceLoraPhy> edPhy = DynamicCast<EndDeviceLoraPhy>(
-                            endDevicesNetDevices[deviceIndex]->GetPhy());
-                        if (edMac && edPhy) {
-                            edMac->SetDataRate(12 - classicalSF);
-                            edPhy->SetSpreadingFactor(classicalSF);
-                            std::cout << "🚨 HYBRID emergency reset to Classical ADR: SF" << (int)classicalSF
-                                      << " (Node " << nodeId << ")" << std::endl;
-                        }
-                    }
-                }
-            }
-            
-            // Also hop to least congested channel
-            std::vector<int> channelCounts(8, 0);
-            for (const auto& kv : deviceChannels) {
-                if (kv.first != nodeId) {
-                    channelCounts[kv.second]++;
-                }
-            }
-            uint8_t bestChannel = 0;
-            for (int i = 1; i < 8; i++) {
-                if (channelCounts[i] < channelCounts[bestChannel]) {
-                    bestChannel = i;
-                }
-            }
-            history.setChannel(bestChannel);
-            deviceChannels[nodeId] = bestChannel;
-            std::cout << "🚨 HYBRID emergency channel hop to " << (int)bestChannel
-                      << " (Node " << nodeId << ")" << std::endl;
-        }
-    }
-    
-    // Update metrics
-    metrics.packetsSent++;
-    if (packetSuccess) {
-        metrics.packetsReceived++;
-    }
-    
-    previousHybridStates[nodeId] = currentState;
-    previousHybridActions[nodeId] = adjustmentAction;
-}
-
 /**
  * Run a single simulation
  */
@@ -5065,27 +4292,24 @@ int main(int argc, char* argv[]) {
         std::cout << "App Period: " << appPeriodSeconds << " seconds" << std::endl;
         std::cout << "========================================\n" << std::endl;
         
-        std::cout << "\n[1/6] Running simulation for NO ADR..." << std::endl;
+        std::cout << "\n[1/5] Running simulation for NO ADR..." << std::endl;
         RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "no_adr_" + csvFileName, ADRMethod::OFF, nWifiInterferers);
         
-        std::cout << "\n[2/6] Running simulation for CLASSICAL ADR..." << std::endl;
+        std::cout << "\n[2/5] Running simulation for CLASSICAL ADR..." << std::endl;
         RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "adr_" + csvFileName, ADRMethod::ON, nWifiInterferers);
         
-        std::cout << "\n[3/6] Running simulation for DDQN-PER ADR..." << std::endl;
+        std::cout << "\n[3/5] Running simulation for DDQN-PER ADR..." << std::endl;
         RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "ddqn_adr_" + csvFileName, ADRMethod::DDQN, nWifiInterferers);
         
-        std::cout << "\n[4/6] Running simulation for PPO ADR..." << std::endl;
+        std::cout << "\n[4/5] Running simulation for PPO ADR..." << std::endl;
         RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "ppo_adr_" + csvFileName, ADRMethod::PPO, nWifiInterferers);
         
-        std::cout << "\n[5/6] Running simulation for MARL ADR..." << std::endl;
+        std::cout << "\n[5/5] Running simulation for MARL ADR..." << std::endl;
         RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "marl_adr_" + csvFileName, ADRMethod::MARL, nWifiInterferers);
-        
-        std::cout << "\n[6/6] Running simulation for HYBRID ADR..." << std::endl;
-        RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "hybrid_adr_" + csvFileName, ADRMethod::HYBRID, nWifiInterferers);
         
         std::cout << "\n========================================" << std::endl;
         std::cout << "ALL ADR METHODS COMPARISON COMPLETED" << std::endl;
-        std::cout << "All six methods used the same:" << std::endl;
+        std::cout << "All five methods used the same:" << std::endl;
         std::cout << "  - Simulation time: " << simulationTime << "s" << std::endl;
         std::cout << "  - Device count: " << nDevices << std::endl;
         std::cout << "  - RNG seed: 12345 (fixed)" << std::endl;
@@ -5096,7 +4320,6 @@ int main(int argc, char* argv[]) {
         std::cout << "  - ddqn_adr_" << csvFileName << std::endl;
         std::cout << "  - ppo_adr_" << csvFileName << std::endl;
         std::cout << "  - marl_adr_" << csvFileName << std::endl;
-        std::cout << "  - hybrid_adr_" << csvFileName << std::endl;
         std::cout << "========================================\n" << std::endl;
     } else {
         ADRMethod adrMethod;
@@ -5113,9 +4336,6 @@ int main(int argc, char* argv[]) {
         } else if (adrModeStr == "marl") {
             adrMethod = ADRMethod::MARL;
             filePrefix = "marl_adr_";
-        } else if (adrModeStr == "hybrid") {
-            adrMethod = ADRMethod::HYBRID;
-            filePrefix = "hybrid_adr_";
         } else {
             adrMethod = ADRMethod::OFF;
             filePrefix = "no_adr_";
@@ -5139,7 +4359,6 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
     else if (adrMethod == ADRMethod::DDQN) adrModeLabel = "DDQN-PER (Optimized)";
     else if (adrMethod == ADRMethod::PPO) adrModeLabel = "PPO";
     else if (adrMethod == ADRMethod::MARL) adrModeLabel = "MARL";
-    else if (adrMethod == ADRMethod::HYBRID) adrModeLabel = "HYBRID-CLASSICAL-MARL";
     std::cout << "  ADR Mode: " << adrModeLabel << std::endl;
     std::cout << "================================================\n" << std::endl;
     
@@ -5152,7 +4371,6 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
     optimizedAgents.clear();  // Clear optimized agents
     ppoAgents.clear();        // Clear PPO agents
     marlAgents.clear();       // Clear MARL agents
-    hybridAgents.clear();     // Clear Hybrid agents
     deviceChannels.clear();   // Clear channel tracking for MARL
     deviceMetrics.clear();
     deviceHistories.clear();  // Clear device histories
@@ -5331,8 +4549,7 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
                 std::cout << "✅ Configured device " << i << " for " 
                           << (adrMethod == ADRMethod::DDQN ? "DDQN ADR" : 
                               (adrMethod == ADRMethod::PPO ? "PPO ADR" : 
-                              (adrMethod == ADRMethod::MARL ? "MARL ADR" : 
-                              (adrMethod == ADRMethod::HYBRID ? "HYBRID ADR" : "No ADR")))) << std::endl;
+                              (adrMethod == ADRMethod::MARL ? "MARL ADR" : "No ADR"))) << std::endl;
             }
         }
         
@@ -5342,18 +4559,15 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
             std::cout << "✅ PPO ADR enabled" << std::endl;
         } else if (adrMethod == ADRMethod::MARL) {
             std::cout << "✅ MARL ADR enabled" << std::endl;
-        } else if (adrMethod == ADRMethod::HYBRID) {
-            std::cout << "✅ HYBRID (Classical + MARL) ADR enabled" << std::endl;
         } else {
             std::cout << "ADR disabled" << std::endl;
         }
     }
     
-    // Initialize RL agents (DDQN, PPO, MARL, or HYBRID)
-    if (adrMethod == ADRMethod::DDQN || adrMethod == ADRMethod::PPO || adrMethod == ADRMethod::MARL || adrMethod == ADRMethod::HYBRID) {
+    // Initialize RL agents (DDQN, PPO, or MARL)
+    if (adrMethod == ADRMethod::DDQN || adrMethod == ADRMethod::PPO || adrMethod == ADRMethod::MARL) {
         std::string agentType = (adrMethod == ADRMethod::DDQN ? "DDQN" : 
-                                (adrMethod == ADRMethod::PPO ? "PPO" : 
-                                (adrMethod == ADRMethod::MARL ? "MARL" : "HYBRID")));
+                                (adrMethod == ADRMethod::PPO ? "PPO" : "MARL"));
         std::cout << "\n🎯 Initializing " << agentType << " agents..." << std::endl;
         for (uint32_t i = 0; i < nDevices; ++i) {
             uint32_t nodeId = endDevices.Get(i)->GetId();
@@ -5424,17 +4638,6 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
                     0.95,    // gamma
                     50       // targetUpdateFreq
                 );
-            } else if (adrMethod == ADRMethod::HYBRID) {
-                // Create HYBRID (Classical + MARL) agent
-                // Lower exploration since Classical ADR provides good baseline
-                hybridAgents[nodeId] = std::make_unique<HybridMARLClassicalAgent>(
-                    0.0005,  // learningRate
-                    0.2,     // epsilon - lower since Classical ADR is baseline
-                    0.999,   // epsilonDecay
-                    0.02,    // minEpsilon - very low since Classical is reliable
-                    0.95,    // gamma
-                    50       // targetUpdateFreq
-                );
             }
             
             std::cout << "  Device " << nodeId << ": distance=" << std::fixed << std::setprecision(0) 
@@ -5454,11 +4657,6 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
             std::cout << "  ✅ Using MARL with coordination signals" << std::endl;
             std::cout << "  ✅ Collision-aware channel selection" << std::endl;
             std::cout << "  ✅ Extended action space (48 actions)" << std::endl;
-        } else if (adrMethod == ADRMethod::HYBRID) {
-            std::cout << "  ✅ Using HYBRID: Classical ADR baseline + MARL adjustment" << std::endl;
-            std::cout << "  ✅ SNR-margin based SF/TP from Classical ADR" << std::endl;
-            std::cout << "  ✅ RL-based channel selection and fine-tuning" << std::endl;
-            std::cout << "  ✅ Collision-aware coordination signals" << std::endl;
         }
         std::cout << std::endl;
     }
@@ -5497,7 +4695,6 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
     else if (adrMethod == ADRMethod::DDQN) adrModeStr = "DDQN-PER";
     else if (adrMethod == ADRMethod::PPO) adrModeStr = "PPO";
     else if (adrMethod == ADRMethod::MARL) adrModeStr = "MARL";
-    else if (adrMethod == ADRMethod::HYBRID) adrModeStr = "HYBRID";
     std::cout << "ADR Mode: " << adrModeStr << std::endl;
     std::cout << "Output file: " << csvFileName << std::endl;
     
