@@ -12,14 +12,25 @@ import glob
 import matplotlib.pyplot as plt
 import seaborn as sns
 from pathlib import Path
+import hashlib
+from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
 
 class LoRaWANADRAnalyzer:
-    def __init__(self, datasets_folder):
+    def __init__(self, datasets_folder, output_root="graphs"):
         self.datasets_folder = Path(datasets_folder)
+        self.output_root = Path(output_root)
+        self.run_hash = self._generate_run_hash()
+        self.output_dir = self.output_root / self.run_hash
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.device_data = {}
         self.summary_stats = {}
+
+    def _generate_run_hash(self):
+        """Generate a short, unique hash for this analysis run."""
+        seed = f"{self.datasets_folder.resolve()}|{datetime.utcnow().isoformat(timespec='seconds')}"
+        return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:10]
         
     def load_datasets(self):
         """Load all CSV datasets for analysis"""
@@ -229,71 +240,211 @@ class LoRaWANADRAnalyzer:
                 else:
                     print(f"     📡 Medium-range device - Moderate signal conditions")
     
-    def create_performance_visualizations(self, all_stats):
-        """Create performance visualization charts"""
-        print("\n📊 Generating performance visualizations...")
+    def create_performance_visualizations(self, all_stats, device_comparison):
+        """Create publication-quality visualizations saved as EPS"""
+        print("\n📊 Generating publication-quality visualizations (EPS)...")
         
         df_stats = pd.DataFrame(all_stats)
         
-        # Set up the plotting style
-        plt.style.use('default')
-        sns.set_palette("husl")
+        # Use a clean style suitable for papers
+        plt.rcParams.update({
+            'font.family': 'serif',
+            'font.size': 11,
+            'axes.labelsize': 12,
+            'axes.titlesize': 13,
+            'xtick.labelsize': 10,
+            'ytick.labelsize': 10,
+            'legend.fontsize': 10,
+            'figure.dpi': 300,
+            'savefig.dpi': 300,
+            'text.usetex': False,
+        })
         
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        fig.suptitle('LoRaWAN ADR Performance Comparison Analysis', fontsize=16, fontweight='bold')
-        
-        # 1. PDR Comparison by ADR Type
         adr_mapping = {
             'no_adr': 'No ADR',
-            'classical_adr': 'Classical ADR',
-            'ddqn_adr': 'DDQN-PER ADR',
-            'ppo_adr': 'PPO ADR',
-            'marl_adr': 'MARL ADR',
-            'hybrid_adr': 'HYBRID ADR'
+            'classical_adr': 'Classical\nADR',
+            'ddqn_adr': 'DDQN-PER\nADR',
+            'ppo_adr': 'PPO\nADR',
+            'marl_adr': 'MARL\nADR',
+            'hybrid_adr': 'Hybrid\nADR'
         }
-        df_stats['adr_type_label'] = df_stats['adr_type'].map(adr_mapping)
+        adr_order = ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr', 'hybrid_adr']
+        # Only keep ADR types that exist in data
+        present_types = [t for t in adr_order if t in df_stats['adr_type'].unique()]
+        present_labels = [adr_mapping[t] for t in present_types]
         
-        sns.boxplot(data=df_stats, x='adr_type_label', y='pdr', ax=axes[0,0])
-        axes[0,0].set_title('Packet Delivery Rate (PDR) by ADR Type')
-        axes[0,0].set_ylabel('PDR (%)')
-        axes[0,0].set_xlabel('ADR Method')
-        axes[0,0].tick_params(axis='x', rotation=45)
+        # Professional uniform colour
+        BAR_FILL  = '#A8C8E8'   # Soft steel blue
+        BAR_EDGE  = '#2B5D8A'   # Darker blue edge
+        ERR_COLOR = '#2B5D8A'   # Match edge for error bars
         
-        # 2. SNR vs Distance scatter plot
-        colors = {'No ADR': 'blue', 'Classical ADR': 'orange', 'DDQN-PER ADR': 'green', 'PPO ADR': 'red', 'MARL ADR': 'purple', 'HYBRID ADR': 'brown'}
-        for adr_type in df_stats['adr_type_label'].unique():
-            data = df_stats[df_stats['adr_type_label'] == adr_type]
-            axes[0,1].scatter(data['distance'], data['avg_snr'], 
-                            label=adr_type, alpha=0.7, s=50, c=colors.get(adr_type, 'gray'))
+        # =====================================================================
+        # FIGURE 1: Packet Delivery Rate (PDR) by ADR Type
+        # =====================================================================
+        fig1, ax1 = plt.subplots(figsize=(6, 4.2))
         
-        axes[0,1].set_title('SNR vs Distance by ADR Type')
-        axes[0,1].set_xlabel('Distance from Gateway (m)')
-        axes[0,1].set_ylabel('Average SNR (dB)')
-        axes[0,1].legend()
-        axes[0,1].grid(True, alpha=0.3)
+        pdr_means = [df_stats[df_stats['adr_type'] == t]['pdr'].mean() for t in present_types]
+        pdr_stds  = [df_stats[df_stats['adr_type'] == t]['pdr'].std()  for t in present_types]
         
-        # 3. TX Power Distribution
-        sns.boxplot(data=df_stats, x='adr_type_label', y='avg_tx_power', ax=axes[1,0])
-        axes[1,0].set_title('TX Power Distribution by ADR Type')
-        axes[1,0].set_ylabel('Average TX Power (dBm)')
-        axes[1,0].set_xlabel('ADR Method')
-        axes[1,0].tick_params(axis='x', rotation=45)
+        bars1 = ax1.bar(present_labels, pdr_means, yerr=pdr_stds,
+                        color=BAR_FILL, edgecolor=BAR_EDGE, linewidth=0.8,
+                        capsize=4, error_kw={'linewidth': 0.8, 'color': ERR_COLOR})
+
+        # PDR is a percentage; keep the y-axis capped at 100%
+        pdr_ylim = 100.0
+        ax1.set_ylim(0, pdr_ylim)
         
-        # 4. Energy Consumption
-        sns.barplot(data=df_stats, x='adr_type_label', y='total_energy', ax=axes[1,1])
-        axes[1,1].set_title('Energy Consumption by ADR Type')
-        axes[1,1].set_ylabel('Total Energy Consumed (mJ)')
-        axes[1,1].set_xlabel('ADR Method')
-        axes[1,1].tick_params(axis='x', rotation=45)
+        # Annotate each bar — place label inside bar if it would exceed the plot
+        for bar, mean, std in zip(bars1, pdr_means, pdr_stds):
+            top = bar.get_height() + std
+            label_y = top + pdr_ylim * 0.015          # small gap above error bar
+            va = 'bottom'
+            color = 'black'
+            if label_y + pdr_ylim * 0.04 > pdr_ylim:  # would overflow
+                label_y = bar.get_height() - pdr_ylim * 0.02
+                va = 'top'
+                color = BAR_EDGE
+            ax1.text(bar.get_x() + bar.get_width() / 2.0, label_y,
+                     f'{mean:.1f}%', ha='center', va=va, fontsize=9,
+                     fontweight='bold', color=color)
         
-        plt.tight_layout()
+        ax1.set_ylabel('Packet Delivery Rate (%)')
+        ax1.set_xlabel('ADR Method')
+        ax1.set_title('Packet Delivery Rate (PDR) by ADR Type')
+        ax1.grid(axis='y', alpha=0.3, linestyle='--')
+        ax1.set_axisbelow(True)
         
-        # Save the plot
-        output_file = 'lorawan_adr_performance_analysis.png'
-        plt.savefig(output_file, dpi=300, bbox_inches='tight')
-        print(f"  ✅ Performance charts saved as: {output_file}")
+        fig1.tight_layout()
+        pdr_eps = self.output_dir / 'pdr_by_adr_type.eps'
+        pdr_png = self.output_dir / 'pdr_by_adr_type.png'
+        fig1.savefig(pdr_eps, format='eps', bbox_inches='tight')
+        fig1.savefig(pdr_png, format='png', dpi=300, bbox_inches='tight')
+        print(f"  ✅ PDR chart saved as: {pdr_eps} / {pdr_png}")
+        plt.close(fig1)
         
-        plt.show()
+        # =====================================================================
+        # FIGURE 2: Energy Consumption by ADR Type
+        # =====================================================================
+        fig2, ax2 = plt.subplots(figsize=(6, 4.2))
+        
+        energy_means = [df_stats[df_stats['adr_type'] == t]['total_energy'].mean() for t in present_types]
+        energy_stds  = [df_stats[df_stats['adr_type'] == t]['total_energy'].std()  for t in present_types]
+        
+        bars2 = ax2.bar(present_labels, energy_means, yerr=energy_stds,
+                        color=BAR_FILL, edgecolor=BAR_EDGE, linewidth=0.8,
+                        capsize=4, error_kw={'linewidth': 0.8, 'color': ERR_COLOR})
+        
+        # Safe y-limit
+        energy_tops = [m + s for m, s in zip(energy_means, energy_stds)]
+        energy_ylim = max(energy_tops) * 1.18
+        ax2.set_ylim(0, energy_ylim)
+        
+        # Annotate — energy values can be large, use compact formatting
+        for bar, mean, std in zip(bars2, energy_means, energy_stds):
+            top = bar.get_height() + std
+            # Format large numbers compactly: e.g. 281.3 k
+            if mean >= 1000:
+                label = f'{mean/1000:.1f}k'
+            else:
+                label = f'{mean:.1f}'
+            label_y = top + energy_ylim * 0.015
+            va = 'bottom'
+            color = 'black'
+            if label_y + energy_ylim * 0.04 > energy_ylim:
+                label_y = bar.get_height() - energy_ylim * 0.02
+                va = 'top'
+                color = BAR_EDGE
+            ax2.text(bar.get_x() + bar.get_width() / 2.0, label_y,
+                     label, ha='center', va=va, fontsize=9,
+                     fontweight='bold', color=color)
+        
+        ax2.set_ylabel('Total Energy Consumed (mJ)')
+        ax2.set_xlabel('ADR Method')
+        ax2.set_title('Energy Consumption by ADR Type')
+        ax2.grid(axis='y', alpha=0.3, linestyle='--')
+        ax2.set_axisbelow(True)
+        
+        fig2.tight_layout()
+        energy_eps = self.output_dir / 'energy_by_adr_type.eps'
+        energy_png = self.output_dir / 'energy_by_adr_type.png'
+        fig2.savefig(energy_eps, format='eps', bbox_inches='tight')
+        fig2.savefig(energy_png, format='png', dpi=300, bbox_inches='tight')
+        print(f"  ✅ Energy chart saved as: {energy_eps} / {energy_png}")
+        plt.close(fig2)
+        
+        # =====================================================================
+        # FIGURE 3: Device Placement Map
+        # =====================================================================
+        fig3, ax3 = plt.subplots(figsize=(6.5, 6.5))
+        
+        # Collect unique device positions (use first available ADR type per device)
+        device_positions = []
+        for device_id in sorted(device_comparison.keys()):
+            dd = device_comparison[device_id]
+            first_key = list(dd.keys())[0]
+            stats = dd[first_key]
+            device_positions.append({
+                'device_id': device_id,
+                'x': stats['position_x'],
+                'y': stats['position_y'],
+                'distance': stats['distance'],
+            })
+        
+        df_pos = pd.DataFrame(device_positions)
+        
+        # Gateway at origin
+        ax3.scatter(0, 0, marker='^', s=220, c='#2B5D8A', edgecolors='black',
+                    linewidths=1.2, zorder=5, label='Gateway')
+        ax3.annotate('GW', (0, 0), textcoords='offset points', xytext=(8, 8),
+                     fontsize=9, fontweight='bold', color='#2B5D8A')
+        
+        # End devices coloured by distance (single blue gradient)
+        sc = ax3.scatter(df_pos['x'], df_pos['y'], c=df_pos['distance'],
+                         cmap='Blues', s=80, edgecolors='#2B5D8A', linewidths=0.6,
+                         zorder=4, label='End Device')
+        
+        # Label each device
+        for _, row in df_pos.iterrows():
+            ax3.annotate(f"D{row['device_id']}",
+                         (row['x'], row['y']),
+                         textcoords='offset points', xytext=(5, 5),
+                         fontsize=7, color='#333333')
+        
+        # Draw distance rings
+        max_dist = df_pos['distance'].max()
+        ring_distances = [d for d in [250, 500, 750, 1000, 1250, 1500] if d <= max_dist * 1.2]
+        for rd in ring_distances:
+            circle = plt.Circle((0, 0), rd, fill=False, linestyle='--',
+                                linewidth=0.5, color='gray', alpha=0.5)
+            ax3.add_patch(circle)
+            ax3.text(rd * 0.707, rd * 0.707, f'{rd}m',
+                     fontsize=7, color='gray', alpha=0.7)
+        
+        cbar = fig3.colorbar(sc, ax=ax3, shrink=0.8, pad=0.02)
+        cbar.set_label('Distance from Gateway (m)', fontsize=10)
+        
+        ax3.set_xlabel('X Position (m)')
+        ax3.set_ylabel('Y Position (m)')
+        ax3.set_title('LoRaWAN Network Device Placement')
+        ax3.set_aspect('equal')
+        ax3.legend(loc='upper left', framealpha=0.9)
+        ax3.grid(True, alpha=0.2, linestyle='-')
+        
+        # Auto-scale with some padding
+        pad = max_dist * 0.15
+        lim = max(abs(df_pos['x']).max(), abs(df_pos['y']).max()) + pad
+        ax3.set_xlim(-lim, lim)
+        ax3.set_ylim(-lim, lim)
+        
+        fig3.tight_layout()
+        placement_eps = self.output_dir / 'device_placement.eps'
+        placement_png = self.output_dir / 'device_placement.png'
+        fig3.savefig(placement_eps, format='eps', bbox_inches='tight')
+        fig3.savefig(placement_png, format='png', dpi=300, bbox_inches='tight')
+        print(f"  ✅ Device placement saved as: {placement_eps} / {placement_png}")
+        plt.close(fig3)
+        
+        print(f"  📄 All figures saved in EPS format (LaTeX / paper ready): {self.output_dir}")
     
     def generate_statistical_report(self, all_stats):
         """Generate detailed statistical report"""
@@ -367,7 +518,7 @@ class LoRaWANADRAnalyzer:
         
         # Export overall statistics
         df_stats = pd.DataFrame(all_stats)
-        output_file = 'lorawan_adr_analysis_results.csv'
+        output_file = self.output_dir / 'lorawan_adr_analysis_results.csv'
         df_stats.to_csv(output_file, index=False)
         print(f"  ✅ Overall statistics exported to: {output_file}")
         
@@ -385,7 +536,7 @@ class LoRaWANADRAnalyzer:
                 })
         
         df_comparison = pd.DataFrame(comparison_data)
-        comparison_file = 'device_comparison_summary.csv'
+        comparison_file = self.output_dir / 'device_comparison_summary.csv'
         df_comparison.to_csv(comparison_file, index=False)
         print(f"  ✅ Device comparison exported to: {comparison_file}")
     
@@ -393,6 +544,7 @@ class LoRaWANADRAnalyzer:
         """Run the complete analysis pipeline"""
         print("🚀 Starting LoRaWAN ADR Performance Analysis...")
         print("="*60)
+        print(f"📁 Output directory: {self.output_dir}")
         
         # Load datasets
         self.load_datasets()
@@ -411,20 +563,24 @@ class LoRaWANADRAnalyzer:
         
         # Create visualizations
         try:
-            self.create_performance_visualizations(all_stats)
+            self.create_performance_visualizations(all_stats, device_comparison)
         except ImportError:
             print("⚠  Matplotlib/Seaborn not available - skipping visualizations")
         except Exception as e:
+            import traceback
             print(f"⚠  Error creating visualizations: {e}")
+            traceback.print_exc()
         
         # Export results
         self.export_results(all_stats, device_comparison)
         
         print(f"\n✅ Analysis complete! Generated insights for {len(device_comparison)} devices")
         print("📋 Summary files created:")
-        print("   - lorawan_adr_analysis_results.csv")
-        print("   - device_comparison_summary.csv") 
-        print("   - lorawan_adr_performance_analysis.png")
+        print(f"   - {self.output_dir / 'lorawan_adr_analysis_results.csv'}")
+        print(f"   - {self.output_dir / 'device_comparison_summary.csv'}")
+        print(f"   - {self.output_dir / 'pdr_by_adr_type.eps'}")
+        print(f"   - {self.output_dir / 'energy_by_adr_type.eps'}")
+        print(f"   - {self.output_dir / 'device_placement.eps'}")
 
 def main():
     """Main function to run the analysis"""

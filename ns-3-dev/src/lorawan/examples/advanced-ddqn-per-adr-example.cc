@@ -44,6 +44,7 @@
 #include "ns3/network-module.h"
 #include "ns3/point-to-point-module.h"
 #include "ns3/point-to-point-net-device.h"
+#include "ns3/rectangle.h"
 
 #include <algorithm>
 #include <ctime>
@@ -55,6 +56,7 @@
 #include <memory>
 #include <cmath>
 #include <random>
+#include <sstream>
 
 using namespace ns3;
 using namespace lorawan;
@@ -2200,6 +2202,7 @@ std::map<uint32_t, double> nodeAntennaGains;
 std::map<uint32_t, double> nodeNoiseFigures;
 std::map<uint32_t, double> nodeHardwareVariance;
 NodeContainer wifiInterferers;
+NodeContainer lteInterferers;
 bool enableEnvironmentalModeling = true;
 
 // Packet tracking for correlation between TX and RX events
@@ -2269,6 +2272,7 @@ void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess);
 void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double preTxRssi);
 void WriteCSVOutput(const std::string& filename);
 void WriteEnvironmentVisualization(const std::string& baseFilename, double radius, uint32_t nDevices);
+void SetupLTEMobileInterferers(double radius, uint32_t nInterferers);
 
 /**
  * Set up simplified urban environment with virtual obstacles
@@ -2369,6 +2373,59 @@ void SetupWiFiInterferers(double radius, uint32_t nInterferers) {
     
     NS_LOG_INFO("Created " << nInterferers << " WiFi interferers (simplified model)");
     std::cout << "Interference modeling: Created " << nInterferers << " WiFi interferers" << std::endl;
+}
+
+/**
+ * Set up LTE mobile interferers with human-like mobility patterns
+ * Simulates people walking with mobile phones causing RF interference
+ */
+void SetupLTEMobileInterferers(double radius, uint32_t nInterferers) {
+    if (!enableEnvironmentalModeling || nInterferers == 0) return;
+    
+    lteInterferers.Create(nInterferers);
+    
+    MobilityHelper lteMobility;
+    
+    // Initial position allocator - spread LTE devices across the area
+    Ptr<ListPositionAllocator> lteAllocator = CreateObject<ListPositionAllocator>();
+    
+    Ptr<UniformRandomVariable> lteXRand = CreateObject<UniformRandomVariable>();
+    lteXRand->SetAttribute("Min", DoubleValue(-radius * 0.9));
+    lteXRand->SetAttribute("Max", DoubleValue(radius * 0.9));
+    lteXRand->SetStream(2101);  // Fixed stream for consistency
+    
+    Ptr<UniformRandomVariable> lteYRand = CreateObject<UniformRandomVariable>();
+    lteYRand->SetAttribute("Min", DoubleValue(-radius * 0.9));
+    lteYRand->SetAttribute("Max", DoubleValue(radius * 0.9));
+    lteYRand->SetStream(2102);  // Fixed stream for consistency
+    
+    for (uint32_t i = 0; i < nInterferers; i++) {
+        // LTE devices at human height (1.5m)
+        Vector ltePos(lteXRand->GetValue(), lteYRand->GetValue(), 1.5);
+        lteAllocator->Add(ltePos);
+    }
+    
+    lteMobility.SetPositionAllocator(lteAllocator);
+    
+    // Use Random Walk 2D mobility model to simulate human walking patterns
+    // People walk at speeds between 0.5 m/s (slow walk) to 2.0 m/s (fast walk)
+    // Bounds format: "minX|maxX|minY|maxY"
+    std::ostringstream boundsStr;
+    boundsStr << "-" << radius << "|" << radius << "|-" << radius << "|" << radius;
+    
+    lteMobility.SetMobilityModel("ns3::RandomWalk2dMobilityModel",
+                                 "Bounds", StringValue(boundsStr.str()),
+                                 "Speed", StringValue("ns3::UniformRandomVariable[Min=0.5|Max=2.0]"),
+                                 "Distance", DoubleValue(50.0),  // Walk 50m before changing direction
+                                 "Mode", StringValue("Distance"));  // Change direction after walking distance
+    
+    lteMobility.Install(lteInterferers);
+    
+    NS_LOG_INFO("Created " << nInterferers << " LTE mobile interferers with human mobility");
+    std::cout << "Interference modeling: Created " << nInterferers << " LTE mobile devices (human walking patterns)" << std::endl;
+    std::cout << "  - Walking speed: 0.5-2.0 m/s (1.8-7.2 km/h)" << std::endl;
+    std::cout << "  - Direction change: every 30s or 50m" << std::endl;
+    std::cout << "  - Device height: 1.5m (hand-held)" << std::endl;
 }
 
 /**
@@ -3645,9 +3702,8 @@ void UpdatePPOADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxR
 void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTxRssi) {
     // ========================================
     // CRITICAL: In low-congestion scenarios, SKIP all RL processing
-    // FIXED: Use same threshold as PPO/DDQN (100s) instead of 500s
     // ========================================
-    if (globalAppPeriodSeconds >= 100.0) {
+    if (globalAppPeriodSeconds >= 500.0) {
         DeviceMetrics& metrics = deviceMetrics[nodeId];
         metrics.packetsSent++;
         if (packetSuccess) {
@@ -4077,7 +4133,7 @@ void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess, double preTx
  * Run a single simulation
  */
 void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSeconds, 
-                  double radius, const std::string& csvFileName, ADRMethod adrMethod, uint32_t nWifiInterferers);
+                  double radius, const std::string& csvFileName, ADRMethod adrMethod, uint32_t nWifiInterferers, uint32_t nLteInterferers);
 
 /**
  * Get optimal initial SF based on distance AND congestion level
@@ -4252,6 +4308,7 @@ int main(int argc, char* argv[]) {
     std::string adrModeStr = "off";
     bool environmentalModeling = true;
     uint32_t nWifiInterferers = 12;
+    uint32_t nLteInterferers = 8;
     
     CommandLine cmd;
     cmd.AddValue("nDevices", "Number of end devices", nDevices);
@@ -4262,6 +4319,7 @@ int main(int argc, char* argv[]) {
     cmd.AddValue("adr", "ADR mode: 'off', 'on', 'ddqn', 'ppo', 'marl', or 'all'", adrModeStr);
     cmd.AddValue("environmental", "Enable environmental effects modeling", environmentalModeling);
     cmd.AddValue("wifiInterferers", "Number of WiFi interfering nodes", nWifiInterferers);
+    cmd.AddValue("lteInterferers", "Number of LTE mobile interfering nodes (moving)", nLteInterferers);
     cmd.Parse(argc, argv);
     
     enableEnvironmentalModeling = environmentalModeling;
@@ -4281,6 +4339,7 @@ int main(int argc, char* argv[]) {
     if (enableEnvironmentalModeling) {
         std::cout << "  - Urban obstacle modeling" << std::endl;
         std::cout << "  - WiFi interference modeling (" << nWifiInterferers << " nodes)" << std::endl;
+        std::cout << "  - LTE mobile interference (" << nLteInterferers << " devices with human mobility)" << std::endl;
         std::cout << "  - Hardware variability modeling" << std::endl;
     }
     
@@ -4293,19 +4352,19 @@ int main(int argc, char* argv[]) {
         std::cout << "========================================\n" << std::endl;
         
         std::cout << "\n[1/5] Running simulation for NO ADR..." << std::endl;
-        RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "no_adr_" + csvFileName, ADRMethod::OFF, nWifiInterferers);
+        RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "no_adr_" + csvFileName, ADRMethod::OFF, nWifiInterferers, nLteInterferers);
         
         std::cout << "\n[2/5] Running simulation for CLASSICAL ADR..." << std::endl;
-        RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "adr_" + csvFileName, ADRMethod::ON, nWifiInterferers);
+        RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "adr_" + csvFileName, ADRMethod::ON, nWifiInterferers, nLteInterferers);
         
         std::cout << "\n[3/5] Running simulation for DDQN-PER ADR..." << std::endl;
-        RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "ddqn_adr_" + csvFileName, ADRMethod::DDQN, nWifiInterferers);
+        RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "ddqn_adr_" + csvFileName, ADRMethod::DDQN, nWifiInterferers, nLteInterferers);
         
         std::cout << "\n[4/5] Running simulation for PPO ADR..." << std::endl;
-        RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "ppo_adr_" + csvFileName, ADRMethod::PPO, nWifiInterferers);
+        RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "ppo_adr_" + csvFileName, ADRMethod::PPO, nWifiInterferers, nLteInterferers);
         
         std::cout << "\n[5/5] Running simulation for MARL ADR..." << std::endl;
-        RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "marl_adr_" + csvFileName, ADRMethod::MARL, nWifiInterferers);
+        RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, "marl_adr_" + csvFileName, ADRMethod::MARL, nWifiInterferers, nLteInterferers);
         
         std::cout << "\n========================================" << std::endl;
         std::cout << "ALL ADR METHODS COMPARISON COMPLETED" << std::endl;
@@ -4340,14 +4399,14 @@ int main(int argc, char* argv[]) {
             adrMethod = ADRMethod::OFF;
             filePrefix = "no_adr_";
         }
-        RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, filePrefix + csvFileName, adrMethod, nWifiInterferers);
+        RunSimulation(nDevices, simulationTime, appPeriodSeconds, radius, filePrefix + csvFileName, adrMethod, nWifiInterferers, nLteInterferers);
     }
     
     return 0;
 }
 
 void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSeconds, 
-                  double radius, const std::string& csvFileName, ADRMethod adrMethod, uint32_t nWifiInterferers) {
+                  double radius, const std::string& csvFileName, ADRMethod adrMethod, uint32_t nWifiInterferers, uint32_t nLteInterferers) {
     
     std::cout << "\n================================================" << std::endl;
     std::cout << "Starting simulation with parameters:" << std::endl;
@@ -4394,6 +4453,7 @@ void RunSimulation(uint32_t nDevices, double simulationTime, double appPeriodSec
     if (enableEnvironmentalModeling) {
         SetupUrbanEnvironment(radius);
         SetupWiFiInterferers(radius, nWifiInterferers);
+        SetupLTEMobileInterferers(radius, nLteInterferers);
         InitializeHardwareVariability(nDevices);
     }
     
