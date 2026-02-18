@@ -50,4 +50,6 @@ vcpkg/
 
 # Ignore local cache used by e.g. clangd
 .cache/
-nbiot_datasets/
+nbiot_datasets/# Large generated datasets
+ns-3-dev/nbiot_datasets/*.csv
+ns-3-dev/nbiot_datasets/graphs/*.eps
