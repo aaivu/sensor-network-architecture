@@ -53,3 +53,5 @@ vcpkg/
 nbiot_datasets/# Large generated datasets
 ns-3-dev/nbiot_datasets/*.csv
 ns-3-dev/nbiot_datasets/graphs/*.eps
+# Large generated NB-IoT artifacts
+ns-3-dev/nbiot_datasets/
