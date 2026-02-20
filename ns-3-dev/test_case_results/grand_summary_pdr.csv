@@ -1,0 +1,171 @@
+tc_id,label,scenario,expected_rl,nDevices,radius,wifiInterferers,lteInterferers,appPeriod,simulationTime,adr_key,adr_name,metric,n_runs,mean,std,min,p5,median,p95,max,ci95_low,ci95_high
+1,"Tiny room, minimal devices",Single open room,fail,5,30,0,0,60,5000,no_adr,No ADR,pdr_pct,100,100.0,0.0,100.0,100.0,100.0,100.0,100.0,100.0,100.0
+1,"Tiny room, minimal devices",Single open room,fail,5,30,0,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,78.3133,0.0,78.3133,78.3133,78.3133,78.3133,78.3133,78.3133,78.3133
+1,"Tiny room, minimal devices",Single open room,fail,5,30,0,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,100.0,0.0,100.0,100.0,100.0,100.0,100.0,100.0,100.0
+1,"Tiny room, minimal devices",Single open room,fail,5,30,0,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,100.0,0.0,100.0,100.0,100.0,100.0,100.0,100.0,100.0
+1,"Tiny room, minimal devices",Single open room,fail,5,30,0,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,100.0,0.0,100.0,100.0,100.0,100.0,100.0,100.0,100.0
+2,"Medium building, no interference","100m, obstacles only",neutral,20,100,0,0,60,5000,no_adr,No ADR,pdr_pct,100,47.9204,0.0,47.9204,47.9204,47.9204,47.9204,47.9204,47.9204,47.9204
+2,"Medium building, no interference","100m, obstacles only",neutral,20,100,0,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,62.6208,0.0,62.6208,62.6208,62.6208,62.6208,62.6208,62.6208,62.6208
+2,"Medium building, no interference","100m, obstacles only",neutral,20,100,0,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,99.687,0.1488,99.1541,99.4562,99.6979,99.8792,100.0,99.6578,99.7162
+2,"Medium building, no interference","100m, obstacles only",neutral,20,100,0,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,99.6305,0.0472,99.5773,99.5773,99.6377,99.6981,99.7585,99.6212,99.6397
+2,"Medium building, no interference","100m, obstacles only",neutral,20,100,0,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,99.766,0.0979,99.2762,99.6381,99.7587,99.8794,99.8794,99.7468,99.7852
+3,"Large building, no interference","500m, obstacles only",neutral,20,500,0,0,60,5000,no_adr,No ADR,pdr_pct,100,46.2929,0.0,46.2929,46.2929,46.2929,46.2929,46.2929,46.2929,46.2929
+3,"Large building, no interference","500m, obstacles only",neutral,20,500,0,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,59.3599,0.0,59.3599,59.3599,59.3599,59.3599,59.3599,59.3599,59.3599
+3,"Large building, no interference","500m, obstacles only",neutral,20,500,0,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,56.7384,0.8296,54.9849,55.4683,56.6767,58.3082,59.2145,56.5758,56.901
+3,"Large building, no interference","500m, obstacles only",neutral,20,500,0,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,62.3261,0.843,60.1449,60.9812,62.3792,63.8285,64.3116,62.1609,62.4913
+3,"Large building, no interference","500m, obstacles only",neutral,20,500,0,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,64.3559,1.5009,60.193,61.8818,64.3245,66.6466,68.9385,64.0617,64.65
+4,Small office (50m),"50m, 3 APs",fail,15,50,3,0,60,5000,no_adr,No ADR,pdr_pct,100,43.7097,0.0,43.7097,43.7097,43.7097,43.7097,43.7097,43.7097,43.7097
+4,Small office (50m),"50m, 3 APs",fail,15,50,3,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,60.4183,0.0,60.4183,60.4183,60.4183,60.4183,60.4183,60.4183,60.4183
+4,Small office (50m),"50m, 3 APs",fail,15,50,3,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,89.9702,0.6394,88.576,88.8938,90.0644,90.9935,91.3113,89.8449,90.0956
+4,Small office (50m),"50m, 3 APs",fail,15,50,3,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,92.7733,0.2286,92.0418,92.3633,92.7653,93.0868,93.1672,92.7285,92.8181
+4,Small office (50m),"50m, 3 APs",fail,15,50,3,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,100.0,0.0,100.0,100.0,100.0,100.0,100.0,100.0,100.0
+5,Medium office (100m),"100m, 8 APs",good,30,100,8,0,60,5000,no_adr,No ADR,pdr_pct,100,38.5605,0.0,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605
+5,Medium office (100m),"100m, 8 APs",good,30,100,8,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,38.0933,0.0,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933
+5,Medium office (100m),"100m, 8 APs",good,30,100,8,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,95.2996,0.4831,94.0088,94.5296,95.4162,95.9791,96.0997,95.2049,95.3942
+5,Medium office (100m),"100m, 8 APs",good,30,100,8,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,93.9759,1.21,89.7467,91.8296,94.1697,95.4584,95.6172,93.7387,94.213
+5,Medium office (100m),"100m, 8 APs",good,30,100,8,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,99.8782,0.118,99.2765,99.7588,99.8794,100.0,100.0,99.8551,99.9013
+6,Hospital wing (200m),"200m, 15 APs",good,50,200,15,0,30,5000,no_adr,No ADR,pdr_pct,100,4.2343,0.0,4.2343,4.2343,4.2343,4.2343,4.2343,4.2343,4.2343
+6,Hospital wing (200m),"200m, 15 APs",good,50,200,15,0,30,5000,classical_adr,Classical ADR,pdr_pct,100,4.1877,0.0,4.1877,4.1877,4.1877,4.1877,4.1877,4.1877,4.1877
+6,Hospital wing (200m),"200m, 15 APs",good,50,200,15,0,30,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,72.662,1.8448,67.6888,69.4679,72.8295,75.1329,77.5854,72.3004,73.0235
+6,Hospital wing (200m),"200m, 15 APs",good,50,200,15,0,30,5000,ppo_adr,PPO ADR,pdr_pct,100,74.7377,0.7194,72.852,73.5975,74.6872,75.8875,76.2214,74.5967,74.8787
+6,Hospital wing (200m),"200m, 15 APs",good,50,200,15,0,30,5000,marl_adr,MARL ADR,pdr_pct,100,89.2955,0.9521,87.148,87.5536,89.3081,90.6426,91.1552,89.1089,89.4822
+7,Factory floor (300m),"300m, 18 APs",good,60,300,18,0,30,5000,no_adr,No ADR,pdr_pct,100,3.197,0.0,3.197,3.197,3.197,3.197,3.197,3.197,3.197
+7,Factory floor (300m),"300m, 18 APs",good,60,300,18,0,30,5000,classical_adr,Classical ADR,pdr_pct,100,6.2074,0.0,6.2074,6.2074,6.2074,6.2074,6.2074,6.2074,6.2074
+7,Factory floor (300m),"300m, 18 APs",good,60,300,18,0,30,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,59.8354,1.8682,55.4364,56.7597,59.9709,62.8129,63.7138,59.4693,60.2016
+7,Factory floor (300m),"300m, 18 APs",good,60,300,18,0,30,5000,ppo_adr,PPO ADR,pdr_pct,100,52.6012,0.848,50.5664,51.3133,52.5665,53.8967,54.8972,52.435,52.7674
+7,Factory floor (300m),"300m, 18 APs",good,60,300,18,0,30,5000,marl_adr,MARL ADR,pdr_pct,100,69.9471,1.3998,66.9407,67.898,69.8877,72.0174,73.6969,69.6727,70.2214
+8,Campus / terminal (500m),"500m, 20 APs",best,80,500,20,0,60,7000,no_adr,No ADR,pdr_pct,100,10.3819,0.0,10.3819,10.3819,10.3819,10.3819,10.3819,10.3819,10.3819
+8,Campus / terminal (500m),"500m, 20 APs",best,80,500,20,0,60,7000,classical_adr,Classical ADR,pdr_pct,100,14.573,0.0,14.573,14.573,14.573,14.573,14.573,14.573,14.573
+8,Campus / terminal (500m),"500m, 20 APs",best,80,500,20,0,60,7000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,44.5662,1.0924,41.5035,42.5925,44.6225,46.0792,47.1714,44.3521,44.7804
+8,Campus / terminal (500m),"500m, 20 APs",best,80,500,20,0,60,7000,ppo_adr,PPO ADR,pdr_pct,100,49.8334,0.4262,48.6068,49.0754,49.8763,50.4255,50.8445,49.7498,49.9169
+8,Campus / terminal (500m),"500m, 20 APs",best,80,500,20,0,60,7000,marl_adr,MARL ADR,pdr_pct,100,53.2782,0.9737,50.183,51.653,53.2717,54.909,55.8115,53.0874,53.469
+9,No WiFi (100m),"100m, 0 APs",neutral,30,100,0,0,60,5000,no_adr,No ADR,pdr_pct,100,28.1917,0.0,28.1917,28.1917,28.1917,28.1917,28.1917,28.1917,28.1917
+9,No WiFi (100m),"100m, 0 APs",neutral,30,100,0,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,42.8744,0.0,42.8744,42.8744,42.8744,42.8744,42.8744,42.8744,42.8744
+9,No WiFi (100m),"100m, 0 APs",neutral,30,100,0,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,95.3201,0.7628,92.6417,93.9485,95.4966,96.1801,96.6224,95.1705,95.4696
+9,No WiFi (100m),"100m, 0 APs",neutral,30,100,0,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,96.2851,0.1444,95.6172,96.0595,96.3008,96.4616,96.5822,96.2568,96.3134
+9,No WiFi (100m),"100m, 0 APs",neutral,30,100,0,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,90.8901,0.3433,89.533,90.3784,90.8615,91.4251,91.7069,90.8228,90.9574
+10,"Light WiFi (3 APs, 100m)","100m, 3 APs",fail,30,100,3,0,60,5000,no_adr,No ADR,pdr_pct,100,38.5605,0.0,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605
+10,"Light WiFi (3 APs, 100m)","100m, 3 APs",fail,30,100,3,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,38.0933,0.0,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933
+10,"Light WiFi (3 APs, 100m)","100m, 3 APs",fail,30,100,3,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,95.269,0.4327,94.2501,94.4914,95.3357,95.9389,96.1801,95.1842,95.3538
+10,"Light WiFi (3 APs, 100m)","100m, 3 APs",fail,30,100,3,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,93.8661,1.2854,90.2694,91.6265,94.0088,95.4966,95.778,93.6142,94.118
+10,"Light WiFi (3 APs, 100m)","100m, 3 APs",fail,30,100,3,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,99.8416,0.1948,98.8344,99.3167,99.8794,99.9598,100.0,99.8034,99.8798
+11,"Moderate WiFi (10 APs, 100m)","100m, 10 APs",good,30,100,10,0,60,5000,no_adr,No ADR,pdr_pct,100,38.5605,0.0,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605
+11,"Moderate WiFi (10 APs, 100m)","100m, 10 APs",good,30,100,10,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,38.0933,0.0,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933
+11,"Moderate WiFi (10 APs, 100m)","100m, 10 APs",good,30,100,10,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,95.2598,0.4805,93.6872,94.3285,95.3357,95.8645,96.0193,95.1656,95.3539
+11,"Moderate WiFi (10 APs, 100m)","100m, 10 APs",good,30,100,10,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,93.6759,1.2059,90.39,91.4174,93.8279,95.378,95.8585,93.4396,93.9123
+11,"Moderate WiFi (10 APs, 100m)","100m, 10 APs",good,30,100,10,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,99.8746,0.129,98.9952,99.7588,99.8794,99.9598,100.0,99.8493,99.8999
+12,"Heavy WiFi (20 APs, 100m)","100m, 20 APs",best,30,100,20,0,60,5000,no_adr,No ADR,pdr_pct,100,38.5605,0.0,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605
+12,"Heavy WiFi (20 APs, 100m)","100m, 20 APs",best,30,100,20,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,38.0933,0.0,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933
+12,"Heavy WiFi (20 APs, 100m)","100m, 20 APs",best,30,100,20,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,95.2392,0.5282,94.0088,94.2883,95.4162,95.9007,96.1399,95.1357,95.3428
+12,"Heavy WiFi (20 APs, 100m)","100m, 20 APs",best,30,100,20,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,93.969,1.2099,90.0684,91.5541,94.23,95.4182,95.8585,93.7319,94.2062
+12,"Heavy WiFi (20 APs, 100m)","100m, 20 APs",best,30,100,20,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,99.8826,0.0938,99.3569,99.7568,99.8794,99.9598,100.0,99.8642,99.901
+13,"Extreme WiFi (30 APs, 100m)","100m, 30 APs — shopping mall/airport",best,30,100,30,0,60,5000,no_adr,No ADR,pdr_pct,100,38.5605,0.0,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605
+13,"Extreme WiFi (30 APs, 100m)","100m, 30 APs — shopping mall/airport",best,30,100,30,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,38.0933,0.0,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933
+13,"Extreme WiFi (30 APs, 100m)","100m, 30 APs — shopping mall/airport",best,30,100,30,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,95.3293,0.4923,93.9284,94.5215,95.4162,95.9831,96.2606,95.2328,95.4258
+13,"Extreme WiFi (30 APs, 100m)","100m, 30 APs — shopping mall/airport",best,30,100,30,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,93.8524,1.2607,89.224,91.3389,93.9887,95.4584,95.6574,93.6053,94.0995
+13,"Extreme WiFi (30 APs, 100m)","100m, 30 APs — shopping mall/airport",best,30,100,30,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,99.8738,0.1316,99.2363,99.6725,99.9196,99.9598,100.0,99.848,99.8996
+14,"Light WiFi, large building (500m)","500m, 5 APs",neutral,50,500,5,0,60,7000,no_adr,No ADR,pdr_pct,100,17.8393,0.0,17.8393,17.8393,17.8393,17.8393,17.8393,17.8393,17.8393
+14,"Light WiFi, large building (500m)","500m, 5 APs",neutral,50,500,5,0,60,7000,classical_adr,Classical ADR,pdr_pct,100,33.5569,0.0,33.5569,33.5569,33.5569,33.5569,33.5569,33.5569,33.5569
+14,"Light WiFi, large building (500m)","500m, 5 APs",neutral,50,500,5,0,60,7000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,61.3667,0.9785,58.6504,59.6135,61.4908,62.8559,63.4533,61.1749,61.5585
+14,"Light WiFi, large building (500m)","500m, 5 APs",neutral,50,500,5,0,60,7000,ppo_adr,PPO ADR,pdr_pct,100,63.9799,0.805,61.7596,62.5818,63.9894,65.1532,65.668,63.8221,64.1376
+14,"Light WiFi, large building (500m)","500m, 5 APs",neutral,50,500,5,0,60,7000,marl_adr,MARL ADR,pdr_pct,100,69.1276,1.3688,65.5605,67.1338,69.0509,71.9008,72.4553,68.8593,69.3959
+15,"Heavy WiFi, large building (500m)","500m, 20 APs",best,50,500,20,0,60,7000,no_adr,No ADR,pdr_pct,100,17.8393,0.0,17.8393,17.8393,17.8393,17.8393,17.8393,17.8393,17.8393
+15,"Heavy WiFi, large building (500m)","500m, 20 APs",best,50,500,20,0,60,7000,classical_adr,Classical ADR,pdr_pct,100,33.5569,0.0,33.5569,33.5569,33.5569,33.5569,33.5569,33.5569,33.5569
+15,"Heavy WiFi, large building (500m)","500m, 20 APs",best,50,500,20,0,60,7000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,61.2234,1.2846,57.2732,59.0781,61.3101,62.9514,64.0041,60.9717,61.4752
+15,"Heavy WiFi, large building (500m)","500m, 20 APs",best,50,500,20,0,60,7000,ppo_adr,PPO ADR,pdr_pct,100,64.0263,0.8103,62.104,62.6334,64.0152,65.3289,66.8905,63.8675,64.1852
+15,"Heavy WiFi, large building (500m)","500m, 20 APs",best,50,500,20,0,60,7000,marl_adr,MARL ADR,pdr_pct,100,69.1812,1.208,66.6265,67.261,69.1283,71.3472,72.7476,68.9445,69.418
+16,"Very sparse (5 devices, 100m)","100m, 8 APs, 5 devices",fail,5,100,8,0,60,5000,no_adr,No ADR,pdr_pct,100,99.7585,0.0,99.7585,99.7585,99.7585,99.7585,99.7585,99.7585,99.7585
+16,"Very sparse (5 devices, 100m)","100m, 8 APs, 5 devices",fail,5,100,8,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,97.1014,0.0,97.1014,97.1014,97.1014,97.1014,97.1014,97.1014,97.1014
+16,"Very sparse (5 devices, 100m)","100m, 8 APs, 5 devices",fail,5,100,8,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,99.2754,0.0,99.2754,99.2754,99.2754,99.2754,99.2754,99.2754,99.2754
+16,"Very sparse (5 devices, 100m)","100m, 8 APs, 5 devices",fail,5,100,8,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,99.3962,0.1628,99.2754,99.2754,99.2754,99.7585,99.7585,99.3642,99.4281
+16,"Very sparse (5 devices, 100m)","100m, 8 APs, 5 devices",fail,5,100,8,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,99.5448,0.1862,99.2736,99.2736,99.5157,99.7579,99.7579,99.5083,99.5813
+17,"Low density (20 devices, 100m)","100m, 8 APs, 20 devices",good,20,100,8,0,60,5000,no_adr,No ADR,pdr_pct,100,59.8311,0.0,59.8311,59.8311,59.8311,59.8311,59.8311,59.8311,59.8311
+17,"Low density (20 devices, 100m)","100m, 8 APs, 20 devices",good,20,100,8,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,63.4117,0.0,63.4117,63.4117,63.4117,63.4117,63.4117,63.4117,63.4117
+17,"Low density (20 devices, 100m)","100m, 8 APs, 20 devices",good,20,100,8,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,87.6958,0.6522,85.9639,86.6144,87.7711,88.6235,89.0361,87.568,87.8236
+17,"Low density (20 devices, 100m)","100m, 8 APs, 20 devices",good,20,100,8,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,92.6514,1.1912,88.6007,90.0392,93.0941,93.9113,94.029,92.4179,92.8849
+17,"Low density (20 devices, 100m)","100m, 8 APs, 20 devices",good,20,100,8,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,92.9801,0.4646,91.3699,92.2752,93.0296,93.6089,93.965,92.889,93.0711
+18,"Medium density (50 devices, 100m)","100m, 8 APs, 50 devices",best,50,100,8,0,60,5000,no_adr,No ADR,pdr_pct,100,17.789,0.0,17.789,17.789,17.789,17.789,17.789,17.789,17.789
+18,"Medium density (50 devices, 100m)","100m, 8 APs, 50 devices",best,50,100,8,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,33.4219,0.0,33.4219,33.4219,33.4219,33.4219,33.4219,33.4219,33.4219
+18,"Medium density (50 devices, 100m)","100m, 8 APs, 50 devices",best,50,100,8,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,90.9621,1.1488,88.4625,88.9875,90.9245,92.6647,93.2899,90.737,91.1873
+18,"Medium density (50 devices, 100m)","100m, 8 APs, 50 devices",best,50,100,8,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,91.1629,0.4149,89.6327,90.3818,91.2276,91.6385,91.9768,91.0816,91.2442
+18,"Medium density (50 devices, 100m)","100m, 8 APs, 50 devices",best,50,100,8,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,99.9484,0.0643,99.4454,99.9277,99.9518,100.0,100.0,99.9358,99.961
+19,"High density (100 devices, 100m)","100m, 8 APs, 100 devices — tracking",best,100,100,8,0,60,5000,no_adr,No ADR,pdr_pct,100,5.1031,0.0,5.1031,5.1031,5.1031,5.1031,5.1031,5.1031,5.1031
+19,"High density (100 devices, 100m)","100m, 8 APs, 100 devices — tracking",best,100,100,8,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,6.5283,0.0,6.5283,6.5283,6.5283,6.5283,6.5283,6.5283,6.5283
+19,"High density (100 devices, 100m)","100m, 8 APs, 100 devices — tracking",best,100,100,8,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,80.3679,1.2422,76.1405,78.2097,80.4611,82.2749,83.1523,80.1244,80.6113
+19,"High density (100 devices, 100m)","100m, 8 APs, 100 devices — tracking",best,100,100,8,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,77.395,0.636,75.3954,76.287,77.4116,78.2953,78.8482,77.2704,77.5197
+19,"High density (100 devices, 100m)","100m, 8 APs, 100 devices — tracking",best,100,100,8,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,77.1536,0.4962,76.041,76.3048,77.1274,77.9861,78.2498,77.0564,77.2509
+20,Very frequent (10s interval),"100m, 8 APs, 30 dev, 10s period",good,30,100,8,0,10,5000,no_adr,No ADR,pdr_pct,100,0.0734,0.0,0.0734,0.0734,0.0734,0.0734,0.0734,0.0734,0.0734
+20,Very frequent (10s interval),"100m, 8 APs, 30 dev, 10s period",good,30,100,8,0,10,5000,classical_adr,Classical ADR,pdr_pct,100,2.035,0.0,2.035,2.035,2.035,2.035,2.035,2.035,2.035
+20,Very frequent (10s interval),"100m, 8 APs, 30 dev, 10s period",good,30,100,8,0,10,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,68.3388,4.2855,57.141,61.1705,69.0369,74.4934,78.704,67.4988,69.1787
+20,Very frequent (10s interval),"100m, 8 APs, 30 dev, 10s period",good,30,100,8,0,10,5000,ppo_adr,PPO ADR,pdr_pct,100,57.3311,1.1733,54.9416,55.4794,57.3006,59.1682,60.9276,57.1012,57.5611
+20,Very frequent (10s interval),"100m, 8 APs, 30 dev, 10s period",good,30,100,8,0,10,5000,marl_adr,MARL ADR,pdr_pct,100,62.9753,0.9453,60.3136,61.4918,62.9162,64.3777,65.3253,62.79,63.1606
+21,Normal IoT rate (60s interval),"100m, 8 APs, 30 dev, 60s period",good,30,100,8,0,60,5000,no_adr,No ADR,pdr_pct,100,38.5605,0.0,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605
+21,Normal IoT rate (60s interval),"100m, 8 APs, 30 dev, 60s period",good,30,100,8,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,38.0933,0.0,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933
+21,Normal IoT rate (60s interval),"100m, 8 APs, 30 dev, 60s period",good,30,100,8,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,95.2384,0.5264,93.9686,94.2099,95.2955,95.9791,96.0193,95.1353,95.3416
+21,Normal IoT rate (60s interval),"100m, 8 APs, 30 dev, 60s period",good,30,100,8,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,93.6735,1.3658,89.8271,91.2947,93.8681,95.3397,95.7378,93.4058,93.9412
+21,Normal IoT rate (60s interval),"100m, 8 APs, 30 dev, 60s period",good,30,100,8,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,99.8617,0.1667,98.955,99.6242,99.8794,100.0,100.0,99.829,99.8944
+22,Slow sensor (300s interval),"100m, 8 APs, 30 dev, 300s period",fail,30,100,8,0,300,15000,no_adr,No ADR,pdr_pct,100,72.043,0.0,72.043,72.043,72.043,72.043,72.043,72.043,72.043
+22,Slow sensor (300s interval),"100m, 8 APs, 30 dev, 300s period",fail,30,100,8,0,300,15000,classical_adr,Classical ADR,pdr_pct,100,90.4441,0.0,90.4441,90.4441,90.4441,90.4441,90.4441,90.4441,90.4441
+22,Slow sensor (300s interval),"100m, 8 APs, 30 dev, 300s period",fail,30,100,8,0,300,15000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,99.2583,0.0,99.2583,99.2583,99.2583,99.2583,99.2583,99.2583,99.2583
+22,Slow sensor (300s interval),"100m, 8 APs, 30 dev, 300s period",fail,30,100,8,0,300,15000,ppo_adr,PPO ADR,pdr_pct,100,79.3821,0.0,79.3821,79.3821,79.3821,79.3821,79.3821,79.3821,79.3821
+22,Slow sensor (300s interval),"100m, 8 APs, 30 dev, 300s period",fail,30,100,8,0,300,15000,marl_adr,MARL ADR,pdr_pct,100,99.7932,0.0562,99.6642,99.728,99.7985,99.8657,99.8657,99.7821,99.8042
+23,Very slow (600s interval),"100m, 8 APs, 30 dev, 600s period",fail,30,100,8,0,600,30000,no_adr,No ADR,pdr_pct,100,78.0914,0.0,78.0914,78.0914,78.0914,78.0914,78.0914,78.0914,78.0914
+23,Very slow (600s interval),"100m, 8 APs, 30 dev, 600s period",fail,30,100,8,0,600,30000,classical_adr,Classical ADR,pdr_pct,100,96.568,0.0,96.568,96.568,96.568,96.568,96.568,96.568,96.568
+23,Very slow (600s interval),"100m, 8 APs, 30 dev, 600s period",fail,30,100,8,0,600,30000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,99.6628,0.0,99.6628,99.6628,99.6628,99.6628,99.6628,99.6628,99.6628
+23,Very slow (600s interval),"100m, 8 APs, 30 dev, 600s period",fail,30,100,8,0,600,30000,ppo_adr,PPO ADR,pdr_pct,100,85.8966,0.0,85.8966,85.8966,85.8966,85.8966,85.8966,85.8966,85.8966
+23,Very slow (600s interval),"100m, 8 APs, 30 dev, 600s period",fail,30,100,8,0,600,30000,marl_adr,MARL ADR,pdr_pct,100,95.7018,0.0,95.7018,95.7018,95.7018,95.7018,95.7018,95.7018,95.7018
+24,Deep indoor — no LTE,"100m, 10 APs, 0 LTE",good,30,100,10,0,60,5000,no_adr,No ADR,pdr_pct,100,38.5605,0.0,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605
+24,Deep indoor — no LTE,"100m, 10 APs, 0 LTE",good,30,100,10,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,38.0933,0.0,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933
+24,Deep indoor — no LTE,"100m, 10 APs, 0 LTE",good,30,100,10,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,95.1801,0.4723,94.0088,94.2079,95.2553,95.8183,95.9791,95.0876,95.2727
+24,Deep indoor — no LTE,"100m, 10 APs, 0 LTE",good,30,100,10,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,93.8175,1.3974,88.6208,91.4697,94.1496,95.4986,95.6172,93.5436,94.0913
+24,Deep indoor — no LTE,"100m, 10 APs, 0 LTE",good,30,100,10,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,99.8661,0.1217,99.2765,99.6383,99.8794,99.9598,100.0,99.8423,99.89
+25,Ground floor retail (weak LTE),"100m, 10 APs, 2 LTE",good,30,100,10,2,60,5000,no_adr,No ADR,pdr_pct,100,30.8126,0.0,30.8126,30.8126,30.8126,30.8126,30.8126,30.8126,30.8126
+25,Ground floor retail (weak LTE),"100m, 10 APs, 2 LTE",good,30,100,10,2,60,5000,classical_adr,Classical ADR,pdr_pct,100,29.4165,0.0,29.4165,29.4165,29.4165,29.4165,29.4165,29.4165,29.4165
+25,Ground floor retail (weak LTE),"100m, 10 APs, 2 LTE",good,30,100,10,2,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,93.7427,0.924,90.8725,92.1451,93.8078,95.0965,95.5368,93.5616,93.9238
+25,Ground floor retail (weak LTE),"100m, 10 APs, 2 LTE",good,30,100,10,2,60,5000,ppo_adr,PPO ADR,pdr_pct,100,99.845,0.0331,99.7987,99.7987,99.839,99.9195,99.9195,99.8385,99.8515
+25,Ground floor retail (weak LTE),"100m, 10 APs, 2 LTE",good,30,100,10,2,60,5000,marl_adr,MARL ADR,pdr_pct,100,99.8533,0.0575,99.7588,99.7588,99.8392,99.9598,100.0,99.842,99.8645
+26,Open-plan ground floor (mod LTE),"100m, 10 APs, 5 LTE",best,30,100,10,5,60,5000,no_adr,No ADR,pdr_pct,100,40.5873,0.0,40.5873,40.5873,40.5873,40.5873,40.5873,40.5873,40.5873
+26,Open-plan ground floor (mod LTE),"100m, 10 APs, 5 LTE",best,30,100,10,5,60,5000,classical_adr,Classical ADR,pdr_pct,100,44.4087,0.0,44.4087,44.4087,44.4087,44.4087,44.4087,44.4087,44.4087
+26,Open-plan ground floor (mod LTE),"100m, 10 APs, 5 LTE",best,30,100,10,5,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,99.7351,0.1857,98.8325,99.4324,99.7585,99.9195,100.0,99.6987,99.7715
+26,Open-plan ground floor (mod LTE),"100m, 10 APs, 5 LTE",best,30,100,10,5,60,5000,ppo_adr,PPO ADR,pdr_pct,100,91.5845,1.0488,88.7772,89.2579,92.0153,92.6006,92.8399,91.3789,91.79
+26,Open-plan ground floor (mod LTE),"100m, 10 APs, 5 LTE",best,30,100,10,5,60,5000,marl_adr,MARL ADR,pdr_pct,100,99.8802,0.1224,99.3567,99.5959,99.9196,99.9598,100.0,99.8562,99.9042
+27,Lobby / entrance (heavy LTE),"100m, 15 APs, 8 LTE",best,30,100,15,8,60,5000,no_adr,No ADR,pdr_pct,100,29.336,0.0,29.336,29.336,29.336,29.336,29.336,29.336,29.336
+27,Lobby / entrance (heavy LTE),"100m, 15 APs, 8 LTE",best,30,100,15,8,60,5000,classical_adr,Classical ADR,pdr_pct,100,54.0258,0.0,54.0258,54.0258,54.0258,54.0258,54.0258,54.0258,54.0258
+27,Lobby / entrance (heavy LTE),"100m, 15 APs, 8 LTE",best,30,100,15,8,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,95.8565,0.4219,94.3305,95.0503,95.9791,96.3008,96.4616,95.7738,95.9391
+27,Lobby / entrance (heavy LTE),"100m, 15 APs, 8 LTE",best,30,100,15,8,60,5000,ppo_adr,PPO ADR,pdr_pct,100,96.0711,0.2373,95.217,95.613,96.1013,96.3424,96.4228,96.0246,96.1177
+27,Lobby / entrance (heavy LTE),"100m, 15 APs, 8 LTE",best,30,100,15,8,60,5000,marl_adr,MARL ADR,pdr_pct,100,86.3617,0.3667,85.4904,85.8119,86.3746,87.0177,87.1785,86.2899,86.4336
+28,Short run — RL undertrained,"100m, 10 APs, 500s",fail,30,100,10,0,60,500,no_adr,No ADR,pdr_pct,100,39.6624,0.0,39.6624,39.6624,39.6624,39.6624,39.6624,39.6624,39.6624
+28,Short run — RL undertrained,"100m, 10 APs, 500s",fail,30,100,10,0,60,500,classical_adr,Classical ADR,pdr_pct,100,27.4262,0.0,27.4262,27.4262,27.4262,27.4262,27.4262,27.4262,27.4262
+28,Short run — RL undertrained,"100m, 10 APs, 500s",fail,30,100,10,0,60,500,ddqn_adr,DDQN-PER ADR,pdr_pct,100,95.8766,0.4554,94.4681,94.8936,96.1702,96.1702,96.1702,95.7873,95.9658
+28,Short run — RL undertrained,"100m, 10 APs, 500s",fail,30,100,10,0,60,500,ppo_adr,PPO ADR,pdr_pct,100,95.8703,0.3929,94.9791,95.3975,95.8159,96.6527,96.6527,95.7933,95.9473
+28,Short run — RL undertrained,"100m, 10 APs, 500s",fail,30,100,10,0,60,500,marl_adr,MARL ADR,pdr_pct,100,89.4473,1.3748,85.654,86.8987,89.4515,91.5612,92.827,89.1778,89.7167
+29,Medium run — partial convergence,"100m, 10 APs, 5000s",good,30,100,10,0,60,5000,no_adr,No ADR,pdr_pct,100,38.5605,0.0,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605,38.5605
+29,Medium run — partial convergence,"100m, 10 APs, 5000s",good,30,100,10,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,38.0933,0.0,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933,38.0933
+29,Medium run — partial convergence,"100m, 10 APs, 5000s",good,30,100,10,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,95.2614,0.5404,93.8882,94.2823,95.376,95.9811,96.2203,95.1554,95.3673
+29,Medium run — partial convergence,"100m, 10 APs, 5000s",good,30,100,10,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,93.7889,1.339,89.7467,91.2706,93.9686,95.4986,95.7378,93.5265,94.0513
+29,Medium run — partial convergence,"100m, 10 APs, 5000s",good,30,100,10,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,99.8686,0.1422,98.9148,99.7568,99.8794,99.9598,100.0,99.8407,99.8964
+30,Long run — full convergence,"100m, 10 APs, 50000s",best,30,100,10,0,60,50000,no_adr,No ADR,pdr_pct,100,38.8242,0.0,38.8242,38.8242,38.8242,38.8242,38.8242,38.8242,38.8242
+30,Long run — full convergence,"100m, 10 APs, 50000s",best,30,100,10,0,60,50000,classical_adr,Classical ADR,pdr_pct,100,50.1981,0.0,50.1981,50.1981,50.1981,50.1981,50.1981,50.1981,50.1981
+30,Long run — full convergence,"100m, 10 APs, 50000s",best,30,100,10,0,60,50000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,95.3146,0.3443,94.4215,94.6811,95.368,95.7529,96.1583,95.2471,95.3821
+30,Long run — full convergence,"100m, 10 APs, 50000s",best,30,100,10,0,60,50000,ppo_adr,PPO ADR,pdr_pct,100,99.7621,0.057,99.3877,99.6989,99.7679,99.8199,99.8399,99.751,99.7733
+30,Long run — full convergence,"100m, 10 APs, 50000s",best,30,100,10,0,60,50000,marl_adr,MARL ADR,pdr_pct,100,99.7799,0.1055,99.4358,99.603,99.8079,99.904,99.944,99.7592,99.8006
+31,Worst-case stress (100m),"100m, 25 APs, 5 LTE, 100 dev, 15s",best,100,100,25,5,15,10000,no_adr,No ADR,pdr_pct,100,0.2477,0.0,0.2477,0.2477,0.2477,0.2477,0.2477,0.2477,0.2477
+31,Worst-case stress (100m),"100m, 25 APs, 5 LTE, 100 dev, 15s",best,100,100,25,5,15,10000,classical_adr,Classical ADR,pdr_pct,100,0.695,0.0,0.695,0.695,0.695,0.695,0.695,0.695,0.695
+31,Worst-case stress (100m),"100m, 25 APs, 5 LTE, 100 dev, 15s",best,100,100,25,5,15,10000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,22.7523,1.4914,19.0576,20.2964,22.6722,25.0169,26.8872,22.46,23.0446
+31,Worst-case stress (100m),"100m, 25 APs, 5 LTE, 100 dev, 15s",best,100,100,25,5,15,10000,ppo_adr,PPO ADR,pdr_pct,100,25.4132,0.5552,24.0402,24.4853,25.3828,26.3136,26.8094,25.3044,25.522
+31,Worst-case stress (100m),"100m, 25 APs, 5 LTE, 100 dev, 15s",best,100,100,25,5,15,10000,marl_adr,MARL ADR,pdr_pct,100,32.4084,0.8346,30.0456,31.123,32.3294,33.7422,34.4556,32.2448,32.572
+32,Worst-case stress (500m),"500m, 25 APs, 5 LTE, 100 dev, 15s",best,100,500,25,5,15,10000,no_adr,No ADR,pdr_pct,100,0.2507,0.0,0.2507,0.2507,0.2507,0.2507,0.2507,0.2507,0.2507
+32,Worst-case stress (500m),"500m, 25 APs, 5 LTE, 100 dev, 15s",best,100,500,25,5,15,10000,classical_adr,Classical ADR,pdr_pct,100,0.4893,0.0,0.4893,0.4893,0.4893,0.4893,0.4893,0.4893,0.4893
+32,Worst-case stress (500m),"500m, 25 APs, 5 LTE, 100 dev, 15s",best,100,500,25,5,15,10000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,17.5761,0.9646,15.1593,15.9159,17.5385,19.1337,19.55,17.3871,17.7652
+32,Worst-case stress (500m),"500m, 25 APs, 5 LTE, 100 dev, 15s",best,100,500,25,5,15,10000,ppo_adr,PPO ADR,pdr_pct,100,19.764,0.2123,19.3393,19.4555,19.7626,20.0537,20.3164,19.7224,19.8057
+32,Worst-case stress (500m),"500m, 25 APs, 5 LTE, 100 dev, 15s",best,100,500,25,5,15,10000,marl_adr,MARL ADR,pdr_pct,100,24.2389,0.5486,22.9429,23.3355,24.2495,25.0987,25.2214,24.1313,24.3464
+33,Edge devices only (500m),"500m, 10 APs, 10 devices",good,10,500,10,0,60,5000,no_adr,No ADR,pdr_pct,100,66.7874,0.0,66.7874,66.7874,66.7874,66.7874,66.7874,66.7874,66.7874
+33,Edge devices only (500m),"500m, 10 APs, 10 devices",good,10,500,10,0,60,5000,classical_adr,Classical ADR,pdr_pct,100,69.4444,0.0,69.4444,69.4444,69.4444,69.4444,69.4444,69.4444,69.4444
+33,Edge devices only (500m),"500m, 10 APs, 10 devices",good,10,500,10,0,60,5000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,56.808,1.1376,54.2271,54.9517,56.7029,58.9372,59.7826,56.585,57.0309
+33,Edge devices only (500m),"500m, 10 APs, 10 devices",good,10,500,10,0,60,5000,ppo_adr,PPO ADR,pdr_pct,100,70.8476,1.6449,66.7473,67.9565,70.9794,73.2829,74.7279,70.5252,71.17
+33,Edge devices only (500m),"500m, 10 APs, 10 devices",good,10,500,10,0,60,5000,marl_adr,MARL ADR,pdr_pct,100,66.4348,2.0865,61.3527,63.5206,66.4251,69.7041,72.2222,66.0258,66.8437
+34,Gateway overload (150 dev),"200m, 15 APs, 150 dev — noisy reward",fail,150,200,15,0,30,10000,no_adr,No ADR,pdr_pct,100,0.0401,0.0,0.0401,0.0401,0.0401,0.0401,0.0401,0.0401,0.0401
+34,Gateway overload (150 dev),"200m, 15 APs, 150 dev — noisy reward",fail,150,200,15,0,30,10000,classical_adr,Classical ADR,pdr_pct,100,0.1742,0.0,0.1742,0.1742,0.1742,0.1742,0.1742,0.1742,0.1742
+34,Gateway overload (150 dev),"200m, 15 APs, 150 dev — noisy reward",fail,150,200,15,0,30,10000,ddqn_adr,DDQN-PER ADR,pdr_pct,100,29.3759,1.5869,26.2734,26.7864,29.301,31.9469,33.2999,29.0649,29.687
+34,Gateway overload (150 dev),"200m, 15 APs, 150 dev — noisy reward",fail,150,200,15,0,30,10000,ppo_adr,PPO ADR,pdr_pct,100,26.8517,0.3058,25.9681,26.4322,26.8446,27.3261,27.7151,26.7917,26.9116
+34,Gateway overload (150 dev),"200m, 15 APs, 150 dev — noisy reward",fail,150,200,15,0,30,10000,marl_adr,MARL ADR,pdr_pct,100,39.8058,0.7971,37.7509,38.4872,39.8388,41.1211,41.6844,39.6496,39.9621
