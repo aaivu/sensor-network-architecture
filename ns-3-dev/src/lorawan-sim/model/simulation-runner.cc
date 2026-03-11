@@ -1,5 +1,6 @@
 #include "simulation-runner.h"
 #include "csv-reader.h"
+#include "adr-agents.h"
 #include "ns3/log.h"
 #include "ns3/simulator.h"
 #include "ns3/config.h"
@@ -27,6 +28,30 @@ namespace ns3 {
 namespace lorawan {
 
 NS_LOG_COMPONENT_DEFINE("SimulationRunner");
+
+/**
+ * Get optimal initial SF based on distance (heuristic warm-start)
+ * This prevents RL agents from starting with random/bad parameters
+ * ALIGNED WITH advanced-ddqn-per-adr-example.cc
+ */
+static uint8_t getInitialSFForDistance(double distance) {
+    if (distance < 300) return 7;
+    if (distance < 500) return 8;
+    if (distance < 800) return 9;
+    if (distance < 1200) return 10;
+    if (distance < 1600) return 11;
+    return 12;
+}
+
+/**
+ * Get optimal initial TX power based on distance
+ * ALIGNED WITH advanced-ddqn-per-adr-example.cc
+ */
+static double getInitialTPForDistance(double distance) {
+    if (distance < 400) return 8;
+    if (distance < 800) return 11;
+    return 14;
+}
 
 // Static instance pointer for callbacks
 SimulationRunner* SimulationRunner::s_instance = nullptr;
@@ -63,6 +88,11 @@ void SimulationRunner::Clear() {
     m_recorder.Clear();
     m_endDevicesNetDevices.clear();
     m_ddqnAgents.clear();
+    m_optimizedDdqnAgents.clear();
+    m_ppoAgents.clear();
+    m_marlAgents.clear();
+    m_deviceHistories.clear();
+    m_currentChannels.clear();
     m_nodeCurrentTxPowers.clear();
     m_nodeCurrentDataRates.clear();
     m_nodeIdToDeviceIndex.clear();
@@ -213,16 +243,41 @@ void SimulationRunner::SetupDevices() {
     // End devices
     phyHelper.SetDeviceType(LoraPhyHelper::ED);
     macHelper.SetDeviceType(LorawanMacHelper::ED_A);
+    // Use ALOHA mode to disable duty cycle restrictions - matches CLI behavior
+    macHelper.SetRegion(LorawanMacHelper::ALOHA);
     NetDeviceContainer endDevicesNetDevs = helper.Install(phyHelper, macHelper, m_endDevices);
+    
+    // Gateway position for distance calculation (always at origin)
+    Vector gatewayPos(0, 0, 15);
     
     for (uint32_t i = 0; i < endDevicesNetDevs.GetN(); ++i) {
         m_endDevicesNetDevices.push_back(endDevicesNetDevs.Get(i)->GetObject<LoraNetDevice>());
         uint32_t nodeId = m_endDevices.Get(i)->GetId();
-        m_currentSF[nodeId] = 7;
-        m_currentTP[nodeId] = m_environment.GetNodeTxPower(nodeId);
+        
+        // Calculate distance from gateway for warm start (ALIGNED WITH CLI)
+        Vector nodePos = m_environment.GetNodePosition(nodeId);
+        double distance = std::sqrt(std::pow(nodePos.x - gatewayPos.x, 2) + 
+                                   std::pow(nodePos.y - gatewayPos.y, 2));
+        
+        // Use distance-based initial values (heuristic warm-start)
+        uint8_t initialSF = getInitialSFForDistance(distance);
+        double initialTP = getInitialTPForDistance(distance);
+        
+        m_currentSF[nodeId] = initialSF;
+        m_currentTP[nodeId] = initialTP;
         m_nodeIdToDeviceIndex[nodeId] = i;
         
-        std::cout << "📋 Mapped Node ID " << nodeId << " → Device Index " << i << std::endl;
+        // Apply initial SF/TP to MAC layer immediately (ALIGNED WITH CLI)
+        Ptr<EndDeviceLorawanMac> mac = DynamicCast<EndDeviceLorawanMac>(
+            m_endDevicesNetDevices[i]->GetMac());
+        if (mac) {
+            mac->SetDataRate(12 - initialSF);  // DR = 12 - SF
+            mac->SetTransmissionPowerDbm(initialTP);
+        }
+        
+        std::cout << "📋 Mapped Node ID " << nodeId << " → Device Index " << i 
+                  << ", Distance=" << distance << "m, initialSF=" << (int)initialSF 
+                  << ", initialTP=" << initialTP << "dBm" << std::endl;
     }
     
     // Gateways
@@ -277,9 +332,33 @@ void SimulationRunner::SetupNetworkServer() {
         for (uint32_t i = 0; i < m_nDevices; ++i) {
             uint32_t nodeId = m_endDevices.Get(i)->GetId();
             m_ddqnAgents[nodeId] = std::make_unique<DDQNPERADRAgent>(
-                0.005, 0.95, 0.9995, 0.2, 0.95, 100, 1.0, 0.1);
+                0.01, 0.5, 0.998, 0.1, 0.9, 50, 1.0, 0.1);  // Match CLI params
+            m_optimizedDdqnAgents[nodeId] = std::make_unique<OptimizedDDQNAgent>(
+                0.0005, 0.3, 0.999, 0.05, 0.95, 50);
+            m_deviceHistories[nodeId] = DeviceHistory();
+            m_deviceHistories[nodeId].currentChannel = i % 8;  // Distribute across channels (match CLI)
+            m_currentChannels[nodeId] = i % 8;
         }
-        std::cout << "✅ DDQN-PER ADR enabled" << std::endl;
+        std::cout << "✅ DDQN-PER ADR enabled with DuelingQNetwork" << std::endl;
+    } else if (m_adrMethod == ADRMethod::PPO) {
+        for (uint32_t i = 0; i < m_nDevices; ++i) {
+            uint32_t nodeId = m_endDevices.Get(i)->GetId();
+            m_ppoAgents[nodeId] = std::make_unique<PPOAgent>();
+            m_deviceHistories[nodeId] = DeviceHistory();
+            m_deviceHistories[nodeId].currentChannel = i % 8;  // Distribute across channels
+            m_currentChannels[nodeId] = i % 8;
+        }
+        std::cout << "✅ PPO ADR enabled with PolicyNetwork/ValueNetwork" << std::endl;
+    } else if (m_adrMethod == ADRMethod::MARL) {
+        for (uint32_t i = 0; i < m_nDevices; ++i) {
+            uint32_t nodeId = m_endDevices.Get(i)->GetId();
+            m_marlAgents[nodeId] = std::make_unique<MARLAgent>(
+                0.0005, 0.3, 0.999, 0.05, 0.95, 50);
+            m_deviceHistories[nodeId] = DeviceHistory();
+            m_deviceHistories[nodeId].currentChannel = i % 8;  // Distribute across channels
+            m_currentChannels[nodeId] = i % 8;
+        }
+        std::cout << "✅ MARL ADR enabled with coordination" << std::endl;
     } else {
         std::cout << "ADR disabled" << std::endl;
     }
@@ -289,6 +368,7 @@ void SimulationRunner::SetupApplications() {
     for (uint32_t i = 0; i < m_nDevices; i++) {
         PeriodicSenderHelper appHelper = PeriodicSenderHelper();
         appHelper.SetPeriod(Seconds(m_appPeriodSeconds));
+        appHelper.SetPacketSize(20);  // Match CLI packet size
         
         ApplicationContainer app = appHelper.Install(m_endDevices.Get(i));
         
@@ -449,8 +529,17 @@ void SimulationRunner::CheckPacketLoss(uint32_t nodeId, double transmissionTime)
             
             m_recorder.UpdateDeviceMetrics(nodeId, false, record.energyConsumed);
             
+            // Update device history
+            if (m_deviceHistories.find(nodeId) != m_deviceHistories.end()) {
+                m_deviceHistories[nodeId].addPacketResult(false, transmissionTime);
+            }
+            
             if (m_adrMethod == ADRMethod::DDQN) {
                 UpdateDDQNADR(nodeId, -20.0, false);
+            } else if (m_adrMethod == ADRMethod::PPO) {
+                UpdatePPOADR(nodeId, -20.0, false);
+            } else if (m_adrMethod == ADRMethod::MARL) {
+                UpdateMARLADR(nodeId, -20.0, false);
             }
             
             NS_LOG_INFO("PACKET LOSS - Node " << nodeId << " at " << transmissionTime << "s");
@@ -476,8 +565,19 @@ void SimulationRunner::OnPacketReceived(Ptr<const Packet> packet) {
             m_recorder.UpdatePacketReceived(it->nodeId, it->timestamp, gatewayRssi, gatewaySnr);
             m_recorder.UpdateDeviceMetrics(it->nodeId, true, it->energyConsumed);
             
+            // Update device history
+            if (m_deviceHistories.find(it->nodeId) != m_deviceHistories.end()) {
+                m_deviceHistories[it->nodeId].addPacketResult(true, rxTime.GetSeconds());
+                m_deviceHistories[it->nodeId].addRssi(gatewayRssi);
+                m_deviceHistories[it->nodeId].addSnr(gatewaySnr);
+            }
+            
             if (m_adrMethod == ADRMethod::DDQN) {
                 UpdateDDQNADR(it->nodeId, gatewaySnr, true);
+            } else if (m_adrMethod == ADRMethod::PPO) {
+                UpdatePPOADR(it->nodeId, gatewaySnr, true);
+            } else if (m_adrMethod == ADRMethod::MARL) {
+                UpdateMARLADR(it->nodeId, gatewaySnr, true);
             }
             
             NS_LOG_INFO("RX SUCCESS - Node " << it->nodeId << " at " << rxTime.GetSeconds() 
@@ -586,6 +686,153 @@ void SimulationRunner::UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuc
     previousActions[nodeId] = action;
 }
 
+void SimulationRunner::UpdatePPOADR(uint32_t nodeId, double snr, bool packetSuccess) {
+    if (m_ppoAgents.find(nodeId) == m_ppoAgents.end()) return;
+    
+    DeviceMetrics& metrics = m_recorder.GetDeviceMetrics(nodeId);
+    DeviceHistory& history = m_deviceHistories[nodeId];
+    
+    uint8_t currentSFVal = m_currentSF[nodeId];
+    double currentTPVal = m_currentTP[nodeId];
+    uint8_t currentChannel = m_currentChannels[nodeId];
+    double currentTime = Simulator::Now().GetSeconds();
+    
+    // Build state using device history
+    std::vector<double> currentState = m_ppoAgents[nodeId]->buildState(
+        history, currentSFVal, currentTPVal, currentChannel, currentTime);
+    
+    // Calculate reward using interference-aware function
+    double reward = calculateInterferenceAwareReward(
+        nodeId, packetSuccess, history.getLastRssi(), snr,
+        history.getRssiVariance(), history.consecutiveLosses, currentSFVal,
+        currentTPVal, currentChannel, history.previousChannel,
+        history.getRecentPdr(), history.getPdrTrend(),
+        currentTime - history.lastSuccessTime);
+    
+    // Store transition
+    static std::map<uint32_t, double> previousLogProbs;
+    if (previousLogProbs.find(nodeId) == previousLogProbs.end()) {
+        previousLogProbs[nodeId] = 0.0;
+    }
+    m_ppoAgents[nodeId]->storeTransition(currentState, currentSFVal, currentTPVal,
+                                         previousLogProbs[nodeId], reward, false);
+    
+    // Select new action
+    auto [newSF, newTP, logProb] = m_ppoAgents[nodeId]->selectAction(currentState);
+    previousLogProbs[nodeId] = logProb;
+    
+    // Apply new parameters
+    if (newSF != currentSFVal || std::abs(newTP - currentTPVal) > 0.5) {
+        m_currentSF[nodeId] = newSF;
+        m_currentTP[nodeId] = newTP;
+        
+        // Update device
+        if (nodeId < m_endDevicesNetDevices.size()) {
+            Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
+                m_endDevicesNetDevices[nodeId]->GetMac());
+            if (edMac) {
+                edMac->SetDataRate(12 - newSF);
+                edMac->SetTransmissionPowerDbm(newTP);
+            }
+        }
+        
+        std::cout << "🎯 PPO ADR: Device " << nodeId 
+                  << " SF=" << (int)newSF << ", TP=" << std::fixed << std::setprecision(1) << newTP << " dBm"
+                  << ", Reward=" << std::setprecision(2) << reward << std::endl;
+    }
+    
+    // Periodically update policy
+    if (metrics.packetsSent % 32 == 0 && metrics.packetsSent > 0) {
+        m_ppoAgents[nodeId]->update();
+    }
+}
+
+void SimulationRunner::UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess) {
+    if (m_marlAgents.find(nodeId) == m_marlAgents.end()) return;
+    
+    DeviceMetrics& metrics = m_recorder.GetDeviceMetrics(nodeId);
+    DeviceHistory& history = m_deviceHistories[nodeId];
+    
+    uint8_t currentSFVal = m_currentSF[nodeId];
+    double currentTPVal = m_currentTP[nodeId];
+    uint8_t currentChannel = m_currentChannels[nodeId];
+    double currentTime = Simulator::Now().GetSeconds();
+    
+    // Build coordinated state with info about other agents
+    std::vector<double> currentState = m_marlAgents[nodeId]->buildCoordinatedState(
+        history, currentSFVal, currentTPVal, currentChannel, currentTime, nodeId,
+        m_deviceHistories, m_currentSF, m_currentChannels);
+    
+    // Calculate interference-aware reward with coordination bonus
+    double reward = calculateInterferenceAwareReward(
+        nodeId, packetSuccess, history.getLastRssi(), snr,
+        history.getRssiVariance(), history.consecutiveLosses, currentSFVal,
+        currentTPVal, currentChannel, history.previousChannel,
+        history.getRecentPdr(), history.getPdrTrend(),
+        currentTime - history.lastSuccessTime);
+    
+    // Add coordination bonus - reward for using different channels than others
+    int sameChannelCount = 0;
+    for (const auto& [id, ch] : m_currentChannels) {
+        if (id != nodeId && ch == currentChannel) sameChannelCount++;
+    }
+    if (sameChannelCount == 0 && packetSuccess) {
+        reward += 0.3;  // Bonus for unique channel usage
+    }
+    
+    // Store and train
+    static std::map<uint32_t, std::vector<double>> previousMarlStates;
+    static std::map<uint32_t, int> previousMarlActions;
+    
+    if (previousMarlStates.find(nodeId) != previousMarlStates.end() && metrics.packetsSent >= 2) {
+        m_marlAgents[nodeId]->addExperience(previousMarlStates[nodeId], previousMarlActions[nodeId],
+                                            reward, currentState, false);
+        m_marlAgents[nodeId]->train();
+    }
+    
+    // Select coordinated action
+    int action = m_marlAgents[nodeId]->selectAction(currentState, currentChannel, m_currentChannels, nodeId);
+    
+    // Decode action using extended action space
+    auto actionResult = ExtendedActionSpace::decodeAction(action, currentSFVal, currentTPVal, currentChannel);
+    
+    uint8_t newSF = currentSFVal;
+    double newTP = currentTPVal;
+    uint8_t newChannel = currentChannel;
+    
+    if (actionResult.newSF != -1) newSF = actionResult.newSF;
+    if (actionResult.newTP != -1) newTP = actionResult.newTP;
+    if (actionResult.forceChannelHop || actionResult.channelDelta != 0) {
+        newChannel = (currentChannel + actionResult.channelDelta + 8) % 8;
+        history.setChannel(newChannel);
+        m_currentChannels[nodeId] = newChannel;
+    }
+    
+    // Apply parameters
+    if (newSF != currentSFVal || std::abs(newTP - currentTPVal) > 0.5) {
+        m_currentSF[nodeId] = newSF;
+        m_currentTP[nodeId] = newTP;
+        
+        if (nodeId < m_endDevicesNetDevices.size()) {
+            Ptr<EndDeviceLorawanMac> edMac = DynamicCast<EndDeviceLorawanMac>(
+                m_endDevicesNetDevices[nodeId]->GetMac());
+            if (edMac) {
+                edMac->SetDataRate(12 - newSF);
+                edMac->SetTransmissionPowerDbm(newTP);
+            }
+        }
+        
+        std::cout << "🤝 MARL ADR: Device " << nodeId 
+                  << " SF=" << (int)newSF << ", TP=" << std::fixed << std::setprecision(1) << newTP << " dBm"
+                  << ", Ch=" << (int)newChannel
+                  << ", Reward=" << std::setprecision(2) << reward
+                  << ", ε=" << std::setprecision(3) << m_marlAgents[nodeId]->getEpsilon() << std::endl;
+    }
+    
+    previousMarlStates[nodeId] = currentState;
+    previousMarlActions[nodeId] = action;
+}
+
 void SimulationRunner::OnTxPowerChange(std::string context, double oldValue, double newValue) {
     if (!s_instance) return;
     
@@ -621,9 +868,31 @@ void SimulationRunner::Run() {
     SetupCallbacks();
     
     std::cout << "=== Simulation Run Details ===" << std::endl;
-    std::cout << "ADR Mode: " << (m_adrMethod == ADRMethod::ON ? "CLASSICAL" : 
-                                  (m_adrMethod == ADRMethod::DDQN ? "DDQN-PER" : "OFF")) << std::endl;
+    std::string adrModeStr;
+    switch (m_adrMethod) {
+        case ADRMethod::ON:
+            adrModeStr = "CLASSICAL";
+            break;
+        case ADRMethod::DDQN:
+            adrModeStr = "DDQN-PER";
+            break;
+        case ADRMethod::PPO:
+            adrModeStr = "PPO";
+            break;
+        case ADRMethod::MARL:
+            adrModeStr = "MARL";
+            break;
+        case ADRMethod::OFF:
+        default:
+            adrModeStr = "OFF";
+            break;
+    }
+    std::cout << "ADR Mode: " << adrModeStr << std::endl;
     std::cout << "Output file: " << m_csvFileName << std::endl;
+    std::cout << "Number of devices: " << m_nDevices << std::endl;
+    std::cout << "Simulation time: " << m_simulationTime << "s" << std::endl;
+    std::cout << "App period: " << m_appPeriodSeconds << "s" << std::endl;
+    std::cout << "Radius: " << m_radius << "m" << std::endl;
     
     Simulator::Schedule(Seconds(m_simulationTime), [this]() {
         m_recorder.WriteCSVOutput(m_csvFileName);

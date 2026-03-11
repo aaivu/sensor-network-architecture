@@ -158,42 +158,32 @@ void PacketRecorder::Clear() {
 }
 
 double CalculateEnergyConsumption(int sf, double txPowerDbm, uint32_t payloadBytes) {
-    // TX current calculation (consistent with unified formula)
-    double baseCurrent = 20.0; // mA baseline
-    double txCurrent = baseCurrent + (txPowerDbm - 2.0) * 2.0; // TX power dependent
-    double voltage = 3.3; // Operating voltage (V)
+    // Standard LoRa energy calculation - ALIGNED WITH advanced-ddqn-per-adr-example.cc
+    double bandwidth = 125000.0;  // 125 kHz
+    double symbolRate = bandwidth / std::pow(2, sf);
     
-    // Calculate actual TX time using ns-3 LoRa model
-    LoraTxParameters txParams;
-    txParams.sf = sf;
-    txParams.headerDisabled = false;
-    txParams.codingRate = 1;
-    txParams.bandwidthHz = 125000;
-    txParams.nPreamble = 8;
-    txParams.crcEnabled = true;
-    txParams.lowDataRateOptimizationEnabled = (sf > 10);
+    // Preamble + header + payload symbols
+    double preambleSymbols = 8;
+    double headerSymbols = 4.25;
+    double payloadSymbols = 8 + std::max(0.0, 
+        std::ceil((8.0 * payloadBytes - 4.0 * sf + 28 + 16) / (4.0 * sf)) * 5);
     
-    Ptr<Packet> dummyPacket = Create<Packet>(payloadBytes);
-    Time txTime = LoraPhy::GetOnAirTime(dummyPacket, txParams);
+    double totalSymbols = preambleSymbols + headerSymbols + payloadSymbols;
+    double timeOnAir = totalSymbols / symbolRate;  // seconds
     
-    // SF penalty: Higher SF = exponentially longer air time
-    // This is critical for fair comparison between ADR methods
-    double sfFactor = std::pow(2.0, sf - 7);
+    // Current consumption based on TX power (realistic values)
+    // SX1276: ~120mA at 17dBm, ~85mA at 2dBm
+    double txCurrent_mA = 85.0 + (txPowerDbm - 2.0) * 2.3;  // Linear approximation
     
-    // TX energy with SF penalty
-    double txEnergyMj = (txCurrent * voltage * txTime.GetSeconds() * sfFactor) / 1000.0;
+    // Energy = Power × Time = (Voltage × Current) × Time
+    // Assuming 3.3V supply
+    double voltage = 3.3;
+    double energy_mJ = voltage * txCurrent_mA * timeOnAir;  // mJ
     
-    // RX energy for Class A device (two receive windows)
-    // RX1: Opens 1s after TX end
-    // RX2: Opens 2s after TX end (if RX1 fails)
-    double rxCurrent = 10.0; // mA (typical LoRa RX current)
-    double rxWindowDuration = 1.0; // seconds per window
-    double rxEnergyMj = (rxCurrent * voltage * rxWindowDuration) / 1000.0;
+    // Add small RX window energy (fixed overhead)
+    double rxEnergy_mJ = 0.033;  // ~10mA for 1ms
     
-    // Total energy = TX + RX windows
-    double totalEnergyMj = txEnergyMj + rxEnergyMj;
-    
-    return totalEnergyMj;
+    return energy_mJ + rxEnergy_mJ;
 }
 
 } // namespace lorawan

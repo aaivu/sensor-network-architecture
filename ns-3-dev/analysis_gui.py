@@ -29,9 +29,31 @@ class LoRaWANADRAnalyzer:
         patterns = {
             'no_adr': ['no_adr_simulation_results_device_*_dataset.csv'],
             'classical_adr': ['adr_simulation_results_device_*_dataset.csv'],
-            'ddqn_adr': ['ddqn_adr_simulation_results_device_*_dataset.csv']
+            'ddqn_adr': ['ddqn_adr_simulation_results_device_*_dataset.csv'],
+            'ppo_adr': ['ppo_adr_simulation_results_device_*_dataset.csv'],
+            'marl_adr': ['marl_adr_simulation_results_device_*_dataset.csv']
         }
         
+        # First pass: scan all files to get all node IDs for mapping
+        all_node_ids = set()
+        for adr_type, pattern_list in patterns.items():
+            for pattern in pattern_list:
+                files = glob.glob(str(self.datasets_folder / pattern))
+                for file_path in files:
+                    filename = os.path.basename(file_path)
+                    node_id = filename.split('device')[1].split('_dataset')[0].strip('_')
+                    all_node_ids.add(node_id)
+        
+        # Create mapping from ns-3 node IDs to 0-based device indices (matching GUI)
+        sorted_node_ids = sorted(all_node_ids, key=lambda x: int(x))
+        self.node_to_device_map = {node_id: idx for idx, node_id in enumerate(sorted_node_ids)}
+        
+        print(f"📋 Device mapping (ns-3 Node ID → GUI Device Index):")
+        for node_id, device_idx in self.node_to_device_map.items():
+            print(f"    Node {node_id} → Device {device_idx}")
+        print()
+        
+        # Second pass: load all data with 0-based device indices in messages
         for adr_type, pattern_list in patterns.items():
             files = []
             # Try all patterns for this ADR type
@@ -43,14 +65,15 @@ class LoRaWANADRAnalyzer:
             self.device_data[adr_type] = {}
             
             for file_path in files:
-                # Extract device ID from filename
+                # Extract device ID from filename (this is ns-3 node ID)
                 filename = os.path.basename(file_path)
-                device_id = filename.split('device')[1].split('_dataset')[0].strip('_')
+                node_id = filename.split('device')[1].split('_dataset')[0].strip('_')
+                device_index = self.node_to_device_map.get(node_id, node_id)
                 
                 try:
                     df = pd.read_csv(file_path)
-                    self.device_data[adr_type][device_id] = df
-                    print(f"  ✅ Loaded {adr_type} data for Device {device_id}: {len(df)} records")
+                    self.device_data[adr_type][node_id] = df
+                    print(f"  ✅ Loaded {adr_type} data for Device {device_index}: {len(df)} records")
                     # Debug: print columns for first file to verify
                     if len(self.device_data[adr_type]) == 1:
                         print(f"    Debug - Columns: {df.columns.tolist()}")
@@ -76,8 +99,12 @@ class LoRaWANADRAnalyzer:
         successful_packets = df[df['snr_db'] != -999.0]
         failed_packets = df[df['snr_db'] == -999.0]
         
+        # Get 0-based device index for display (matching GUI)
+        device_index = self.node_to_device_map.get(device_id, device_id)
+        
         stats = {
-            'device_id': device_id,
+            'device_id': device_id,  # Keep original ns-3 node ID for data lookup
+            'device_index': device_index,  # 0-based index for display (matches GUI)
             'adr_type': adr_type,
             'total_packets': len(df),
             'successful_packets': len(successful_packets),
@@ -118,7 +145,7 @@ class LoRaWANADRAnalyzer:
         # Analyze each device for each ADR type
         for device_id in all_devices:
             device_comparison[device_id] = {}
-            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr']:
+            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr']:
                 stats = self.analyze_device_performance(device_id, adr_type)
                 if stats:
                     all_stats.append(stats)
@@ -146,13 +173,15 @@ class LoRaWANADRAnalyzer:
         print("\n📊 OVERALL PERFORMANCE BY ADR TYPE:")
         print("-" * 50)
         
-        for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr']:
+        for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr']:
             if adr_type in adr_summary.index:
                 row = adr_summary.loc[adr_type]
                 adr_name = {
                     'no_adr': 'No ADR',
                     'classical_adr': 'Classical ADR', 
-                    'ddqn_adr': 'DDQN-PER ADR'
+                    'ddqn_adr': 'DDQN-PER ADR',
+                    'ppo_adr': 'PPO ADR',
+                    'marl_adr': 'MARL ADR'
                 }[adr_type]
                 
                 print(f"\n{adr_name}:")
@@ -177,10 +206,12 @@ class LoRaWANADRAnalyzer:
         print("🔍 DEVICE-BY-DEVICE DETAILED ANALYSIS")
         print("="*80)
         
-        for device_id in sorted(device_comparison.keys()):
+        for device_id in sorted(device_comparison.keys(), key=lambda x: int(x)):
             device_data = device_comparison[device_id]
             
-            print(f"\n📱 DEVICE {device_id}")
+            # Convert ns-3 node ID to 0-based device index for display
+            device_index = self.node_to_device_map.get(device_id, device_id)
+            print(f"\n📱 DEVICE {device_index}")
             print("-" * 40)
             
             # Device position and distance
@@ -192,13 +223,15 @@ class LoRaWANADRAnalyzer:
             print(f"\n{'ADR Method':<15} {'PDR (%)':<8} {'Avg SNR':<10} {'TX Power':<10} {'SF':<5} {'Energy (mJ)':<12}")
             print("-" * 70)
             
-            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr']:
+            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr']:
                 if adr_type in device_data:
                     stats = device_data[adr_type]
                     adr_name = {
                         'no_adr': 'No ADR',
                         'classical_adr': 'Classical ADR',
-                        'ddqn_adr': 'DDQN-PER ADR'
+                        'ddqn_adr': 'DDQN-PER ADR',
+                        'ppo_adr': 'PPO ADR',
+                        'marl_adr': 'MARL ADR'
                     }[adr_type]
                     
                     print(f"{adr_name:<15} {stats['pdr']:<8.1f} {stats['avg_snr']:<10.1f} "
@@ -243,7 +276,9 @@ class LoRaWANADRAnalyzer:
         adr_mapping = {
             'no_adr': 'No ADR',
             'classical_adr': 'Classical ADR',
-            'ddqn_adr': 'DDQN-PER ADR'
+            'ddqn_adr': 'DDQN-PER ADR',
+            'ppo_adr': 'PPO ADR',
+            'marl_adr': 'MARL ADR'
         }
         df_stats['adr_type_label'] = df_stats['adr_type'].map(adr_mapping)
         
@@ -254,7 +289,7 @@ class LoRaWANADRAnalyzer:
         axes[0,0].tick_params(axis='x', rotation=45)
         
         # 2. SNR vs Distance scatter plot
-        colors = {'No ADR': 'blue', 'Classical ADR': 'orange', 'DDQN-PER ADR': 'green'}
+        colors = {'No ADR': 'blue', 'Classical ADR': 'orange', 'DDQN-PER ADR': 'green', 'PPO ADR': 'red', 'MARL ADR': 'purple'}
         for adr_type in df_stats['adr_type_label'].unique():
             data = df_stats[df_stats['adr_type_label'] == adr_type]
             axes[0,1].scatter(data['distance'], data['avg_snr'], 
@@ -331,6 +366,8 @@ class LoRaWANADRAnalyzer:
         no_adr_pdr = df_stats[df_stats['adr_type'] == 'no_adr']['pdr']
         classical_adr_pdr = df_stats[df_stats['adr_type'] == 'classical_adr']['pdr']
         ddqn_adr_pdr = df_stats[df_stats['adr_type'] == 'ddqn_adr']['pdr']
+        ppo_adr_pdr = df_stats[df_stats['adr_type'] == 'ppo_adr']['pdr']
+        marl_adr_pdr = df_stats[df_stats['adr_type'] == 'marl_adr']['pdr']
         
         if len(no_adr_pdr) > 0 and len(ddqn_adr_pdr) > 0:
             t_stat, p_value = ttest_ind(ddqn_adr_pdr, no_adr_pdr)
@@ -342,9 +379,20 @@ class LoRaWANADRAnalyzer:
             significance = "significant" if p_value < 0.05 else "not significant"
             print(f"DDQN-PER vs Classical ADR PDR: t={t_stat:.3f}, p={p_value:.3f} ({significance})")
         
-        # ANOVA test for all three groups
-        if len(no_adr_pdr) > 0 and len(classical_adr_pdr) > 0 and len(ddqn_adr_pdr) > 0:
-            f_stat, p_value = f_oneway(no_adr_pdr, classical_adr_pdr, ddqn_adr_pdr)
+        if len(no_adr_pdr) > 0 and len(ppo_adr_pdr) > 0:
+            t_stat, p_value = ttest_ind(ppo_adr_pdr, no_adr_pdr)
+            significance = "significant" if p_value < 0.05 else "not significant"
+            print(f"PPO vs No ADR PDR: t={t_stat:.3f}, p={p_value:.3f} ({significance})")
+        
+        if len(no_adr_pdr) > 0 and len(marl_adr_pdr) > 0:
+            t_stat, p_value = ttest_ind(marl_adr_pdr, no_adr_pdr)
+            significance = "significant" if p_value < 0.05 else "not significant"
+            print(f"MARL vs No ADR PDR: t={t_stat:.3f}, p={p_value:.3f} ({significance})")
+        
+        # ANOVA test for all groups
+        pdr_groups = [g for g in [no_adr_pdr, classical_adr_pdr, ddqn_adr_pdr, ppo_adr_pdr, marl_adr_pdr] if len(g) > 0]
+        if len(pdr_groups) >= 2:
+            f_stat, p_value = f_oneway(*pdr_groups)
             significance = "significant" if p_value < 0.05 else "not significant"
             print(f"ANOVA test (all ADR types): F={f_stat:.3f}, p={p_value:.3f} ({significance})")
     

@@ -55,13 +55,6 @@ MainWindow::MainWindow(QWidget* parent)
     logMessage("=== LoRaWAN Simulator Started ===", "INFO");
     logMessage(QString("Output directory: %1").arg(m_outputDirectory), "INFO");
     
-    // Log NS-3 integration status
-#ifdef ENABLE_NS3
-    logMessage("NS-3 Integration: ENABLED (compiled mode)", "SUCCESS");
-#else
-    logMessage("NS-3 Integration: DISABLED (command-line fallback mode)", "WARNING");
-#endif
-    
     updateStatusBar("Ready");
 }
 
@@ -176,7 +169,7 @@ void MainWindow::setupParameterPanel() {
     networkLayout->addWidget(new QLabel("Number of Devices:"), 0, 0);
     m_numDevicesSpin = new QSpinBox();
     m_numDevicesSpin->setRange(1, 1000);
-    m_numDevicesSpin->setValue(50);
+    m_numDevicesSpin->setValue(10);  // Default 10 devices to match CLI
     connect(m_numDevicesSpin, QOverload<int>::of(&QSpinBox::valueChanged),
             this, &MainWindow::onNumDevicesChanged);
     networkLayout->addWidget(m_numDevicesSpin, 0, 1);
@@ -200,21 +193,21 @@ void MainWindow::setupParameterPanel() {
     simLayout->addWidget(new QLabel("Simulation Time (s):"), 0, 0);
     m_simTimeSpin = new QSpinBox();
     m_simTimeSpin->setRange(60, 86400);
-    m_simTimeSpin->setValue(3600);
+    m_simTimeSpin->setValue(300);  // Default 300s to match CLI
     m_simTimeSpin->setSingleStep(60);
     simLayout->addWidget(m_simTimeSpin, 0, 1);
     
     simLayout->addWidget(new QLabel("App Period (s):"), 1, 0);
     m_appPeriodSpin = new QDoubleSpinBox();
     m_appPeriodSpin->setRange(1.0, 3600.0);
-    m_appPeriodSpin->setValue(60.0);
+    m_appPeriodSpin->setValue(30.0);  // Default 30s to match CLI
     m_appPeriodSpin->setSingleStep(10.0);
     simLayout->addWidget(m_appPeriodSpin, 1, 1);
     
     simLayout->addWidget(new QLabel("WiFi Interferers:"), 2, 0);
     m_wifiInterferersSpin = new QSpinBox();
     m_wifiInterferersSpin->setRange(0, 100);
-    m_wifiInterferersSpin->setValue(0);  // Default to 0 interferers
+    m_wifiInterferersSpin->setValue(12);  // Default to 12 interferers (matches CLI)
     simLayout->addWidget(m_wifiInterferersSpin, 2, 1);
     
     simLayout->addWidget(new QLabel("ADR Mode:"), 3, 0);
@@ -222,10 +215,12 @@ void MainWindow::setupParameterPanel() {
     m_adrModeCombo->addItem("Off", "off");
     m_adrModeCombo->addItem("Standard", "on");
     m_adrModeCombo->addItem("DDQN-PER", "ddqn");
+    m_adrModeCombo->addItem("PPO", "ppo");
+    m_adrModeCombo->addItem("MARL", "marl");
     m_adrModeCombo->addItem("All (Comparison)", "all");
     m_adrModeCombo->setCurrentIndex(2);  // Default to DDQN
     simLayout->addWidget(m_adrModeCombo, 3, 1);
-    
+
     simGroup->setLayout(simLayout);
     layout->addWidget(simGroup);
     
@@ -539,6 +534,10 @@ void MainWindow::organizeSimulationFiles(const QString& ns3Dir, const QString& c
         QString expectedPrefix;
         if (adrMode == "ddqn") {
             expectedPrefix = "ddqn_adr_";
+        } else if (adrMode == "ppo") {
+            expectedPrefix = "ppo_adr_";
+        } else if (adrMode == "marl") {
+            expectedPrefix = "marl_adr_";
         } else if (adrMode == "on") {
             expectedPrefix = "adr_";
         } else {
@@ -623,9 +622,9 @@ void MainWindow::runSimulationThread() {
         QString adrMode = m_adrModeCombo->currentData().toString();
         QStringList adrModes;
         if (adrMode == "all") {
-            adrModes << "off" << "on" << "ddqn";
+            adrModes << "off" << "on" << "ddqn" << "ppo" << "marl";
             QMetaObject::invokeMethod(this, [this]() {
-                logMessage("Running comparison mode - will execute 3 simulations (off, on, ddqn)", "INFO");
+                logMessage("Running comparison mode - will execute 5 simulations (off, on, ddqn, ppo, marl)", "INFO");
             }, Qt::QueuedConnection);
         } else {
             adrModes << adrMode;
@@ -662,6 +661,10 @@ void MainWindow::runSimulationThread() {
                 adrMethod = ns3::lorawan::ADRMethod::OFF;
             } else if (currentAdrMode == "ddqn") {
                 adrMethod = ns3::lorawan::ADRMethod::DDQN;
+            } else if (currentAdrMode == "ppo") {
+                adrMethod = ns3::lorawan::ADRMethod::PPO;
+            } else if (currentAdrMode == "marl") {
+                adrMethod = ns3::lorawan::ADRMethod::MARL;
             } else {
                 adrMethod = ns3::lorawan::ADRMethod::ON;
             }
@@ -749,136 +752,124 @@ void MainWindow::runSimulationThread() {
     // Get actual number of devices from the scene (excluding gateway)
     int actualNumDevices = m_mapScene->getNodePositions().size() - 1;  // -1 for gateway
     
-    // Handle "All" mode - run multiple simulations
-    QStringList adrModes;
+    // Log the ADR mode being used
     if (adrMode == "all") {
-        adrModes << "off" << "on" << "ddqn";
         QMetaObject::invokeMethod(this, [this]() {
-            logMessage("Running comparison mode - will execute 3 simulations (off, on, ddqn)", "INFO");
+            logMessage("Running comparison mode - ns-3 will execute all 5 ADR modes (off, on, ddqn, ppo, marl)", "INFO");
         }, Qt::QueuedConnection);
-    } else {
-        adrModes << adrMode;
     }
     
-    // Run simulation(s)
-    bool allSimulationsSucceeded = true;
-    for (int i = 0; i < adrModes.size(); i++) {
-        QString currentAdrMode = adrModes[i];
-        
-        QString command = QString("./ns3 run \"lorawan-sim-example "
-                                 "--nDevices=%1 --radius=%2 --simulationTime=%3 "
-                                 "--appPeriod=%4 --adr=%5 --csvFile=%6 "
-                                 "--environmental=true --wifiInterferers=%7 "
-                                 "--nodePositions=%8 --obstacles=%9 --outputDir=lorawan_datasets_gui\"")
-                            .arg(actualNumDevices)
-                            .arg(m_radiusSpin->value())
-                            .arg(m_simTimeSpin->value())
-                            .arg(m_appPeriodSpin->value())
-                            .arg(currentAdrMode)
-                            .arg(csvFilename)
-                            .arg(m_wifiInterferersSpin->value())
-                            .arg(nodePositionsPath)
-                            .arg(obstaclesPath);
-        
-        // Save command to file
-        QString cmdFile = m_outputDirectory + "/config/simulation_command.sh";
-        QFile commandFile(cmdFile);
-        if (commandFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
-            QTextStream out(&commandFile);
-            out << "#!/bin/bash\n";
-            out << "# Simulation command for ADR mode: " << currentAdrMode << "\n";
-            out << "cd " << ns3Dir << "\n";
-            out << command << "\n";
-            commandFile.close();
-            commandFile.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
-        }
-        
-        QMetaObject::invokeMethod(this, [this, ns3Dir, command, currentAdrMode, i, adrModes, cmdFile]() {
-            if (adrModes.size() > 1) {
-                logMessage(QString("========== Simulation %1 of %2: ADR mode '%3' ==========")
-                          .arg(i+1).arg(adrModes.size()).arg(currentAdrMode), "INFO");
-            }
-            logMessage("Command saved to: " + cmdFile, "INFO");
-            logMessage("Working directory: " + ns3Dir, "INFO");
-            logMessage("Executing command:", "INFO");
-            logMessage(command, "CMD");
+    // Build ns-3 command - pass adrMode directly (ns-3 handles 'all' mode internally)
+    QString command = QString("./ns3 run \"lorawan-sim-example "
+                             "--nDevices=%1 --radius=%2 --simulationTime=%3 "
+                             "--appPeriod=%4 --adr=%5 --csvFile=%6 "
+                             "--environmental=true --wifiInterferers=%7 "
+                             "--nodePositions=%8 --obstacles=%9 --outputDir=lorawan_datasets_gui\"")
+                        .arg(actualNumDevices)
+                        .arg(m_radiusSpin->value())
+                        .arg(m_simTimeSpin->value())
+                        .arg(m_appPeriodSpin->value())
+                        .arg(adrMode)
+                        .arg(csvFilename)
+                        .arg(m_wifiInterferersSpin->value())
+                        .arg(nodePositionsPath)
+                        .arg(obstaclesPath);
+    
+    // Save command to file
+    QString cmdFile = m_outputDirectory + "/config/simulation_command.sh";
+    QFile commandFile(cmdFile);
+    if (commandFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        QTextStream out(&commandFile);
+        out << "#!/bin/bash\n";
+        out << "# Simulation command for ADR mode: " << adrMode << "\n";
+        out << "cd " << ns3Dir << "\n";
+        out << command << "\n";
+        commandFile.close();
+        commandFile.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner);
+    }
+    
+    QMetaObject::invokeMethod(this, [this, ns3Dir, command, adrMode, cmdFile]() {
+        logMessage("Command saved to: " + cmdFile, "INFO");
+        logMessage("Working directory: " + ns3Dir, "INFO");
+        logMessage("Executing command:", "INFO");
+        logMessage(command, "CMD");
+    }, Qt::QueuedConnection);
+    
+    // Execute command
+    QProcess process;
+    process.setWorkingDirectory(ns3Dir);
+    process.start("/bin/bash", QStringList() << "-c" << command);
+    
+    if (!process.waitForStarted()) {
+        QMetaObject::invokeMethod(this, [this, adrMode]() {
+            logMessage(QString("Failed to start ns-3 process for ADR mode '%1'").arg(adrMode), "ERROR");
         }, Qt::QueuedConnection);
-        
-        // Execute command
-        QProcess process;
-        process.setWorkingDirectory(ns3Dir);
-        process.start("/bin/bash", QStringList() << "-c" << command);
-        
-        if (!process.waitForStarted()) {
-            QMetaObject::invokeMethod(this, [this, currentAdrMode]() {
-                logMessage(QString("Failed to start ns-3 process for ADR mode '%1'").arg(currentAdrMode), "ERROR");
-            }, Qt::QueuedConnection);
-            allSimulationsSucceeded = false;
-            continue;
-        }
-        
-        QMetaObject::invokeMethod(this, [this]() {
-            logMessage("ns-3 process started, waiting for completion...", "INFO");
+        return;
+    }
+    
+    QMetaObject::invokeMethod(this, [this]() {
+        logMessage("ns-3 process started, waiting for completion...", "INFO");
+    }, Qt::QueuedConnection);
+    
+    // Wait for completion (with timeout - longer for 'all' mode which runs 5 simulations)
+    int timeoutMs = (adrMode == "all") ? 3000000 : 600000;  // 50 min for 'all', 10 min for single
+    if (!process.waitForFinished(timeoutMs)) {
+        QMetaObject::invokeMethod(this, [this, adrMode]() {
+            logMessage(QString("Simulation timeout or error for ADR mode '%1'").arg(adrMode), "ERROR");
         }, Qt::QueuedConnection);
-        
-        // Wait for completion (with timeout)
-        if (!process.waitForFinished(600000)) {  // 10 minute timeout
-            QMetaObject::invokeMethod(this, [this, currentAdrMode]() {
-                logMessage(QString("Simulation timeout or error for ADR mode '%1'").arg(currentAdrMode), "ERROR");
-            }, Qt::QueuedConnection);
-            process.kill();
-            allSimulationsSucceeded = false;
-            continue;
+        process.kill();
+        return;
+    }
+    
+    // Get output
+    QString stdOut = process.readAllStandardOutput();
+    QString stdErr = process.readAllStandardError();
+    int exitCode = process.exitCode();
+    
+    // Log output
+    QMetaObject::invokeMethod(this, [this, stdOut, stdErr, exitCode, adrMode]() {
+        if (!stdOut.isEmpty()) {
+            logMessage("=== ns-3 stdout ===", "INFO");
+            logMessage(stdOut, "OUTPUT");
         }
-        
-        // Get output
-        QString stdOut = process.readAllStandardOutput();
-        QString stdErr = process.readAllStandardError();
-        int exitCode = process.exitCode();
-        
-        // Log output for this simulation
-        QMetaObject::invokeMethod(this, [this, stdOut, stdErr, exitCode, currentAdrMode, i, adrModes]() {
-            if (!stdOut.isEmpty()) {
-                logMessage("=== ns-3 stdout ===", "INFO");
-                logMessage(stdOut, "OUTPUT");
-            }
-            if (!stdErr.isEmpty()) {
-                logMessage("=== ns-3 stderr ===", "WARN");
-                logMessage(stdErr, "ERROR");
-            }
-            logMessage(QString("ns-3 process exited with code: %1").arg(exitCode), 
-                       exitCode == 0 ? "SUCCESS" : "ERROR");
-            
-            if (adrModes.size() > 1) {
-                logMessage(QString("Completed simulation %1 of %2 (ADR mode '%3')")
-                          .arg(i+1).arg(adrModes.size()).arg(currentAdrMode), "SUCCESS");
-            }
+        if (!stdErr.isEmpty()) {
+            logMessage("=== ns-3 stderr ===", "WARN");
+            logMessage(stdErr, "ERROR");
+        }
+        logMessage(QString("ns-3 process exited with code: %1").arg(exitCode), 
+                   exitCode == 0 ? "SUCCESS" : "ERROR");
+    }, Qt::QueuedConnection);
+    
+    bool simulationSucceeded = (exitCode == 0);
+    
+    if (!simulationSucceeded) {
+        QMetaObject::invokeMethod(this, [this, adrMode]() {
+            logMessage(QString("Simulation failed for ADR mode '%1'").arg(adrMode), "ERROR");
         }, Qt::QueuedConnection);
-        
-        if (exitCode != 0) {
-            allSimulationsSucceeded = false;
-            QMetaObject::invokeMethod(this, [this, currentAdrMode]() {
-                logMessage(QString("Simulation failed for ADR mode '%1'").arg(currentAdrMode), "ERROR");
-            }, Qt::QueuedConnection);
+    }
+    
+    // Organize files - for 'all' mode, organize each ADR type's files
+    if (adrMode == "all") {
+        QStringList allModes = {"off", "on", "ddqn", "ppo", "marl"};
+        for (const QString& mode : allModes) {
+            organizeSimulationFiles(ns3Dir, csvDir, mode, csvFilename);
         }
-        
-        // Organize files for this specific ADR mode
-        organizeSimulationFiles(ns3Dir, csvDir, currentAdrMode, csvFilename);
+    } else {
+        organizeSimulationFiles(ns3Dir, csvDir, adrMode, csvFilename);
     }
     
     // Final status
-    int exitCode = allSimulationsSucceeded ? 0 : 1;
-    QString stdOut = "";
-    QString stdErr = "";
-    
-    // All simulations complete - log final status
-    QMetaObject::invokeMethod(this, [this, allSimulationsSucceeded]() {
-        if (allSimulationsSucceeded) {
+    QMetaObject::invokeMethod(this, [this, simulationSucceeded, adrMode]() {
+        if (simulationSucceeded) {
             logMessage("========================================", "SUCCESS");
-            logMessage("All simulations completed successfully!", "SUCCESS");
+            if (adrMode == "all") {
+                logMessage("All 5 ADR mode simulations completed successfully!", "SUCCESS");
+            } else {
+                logMessage("Simulation completed successfully!", "SUCCESS");
+            }
             logMessage("========================================", "SUCCESS");
         } else {
-            logMessage("Some simulations failed - check log for details", "ERROR");
+            logMessage("Simulation failed - check log for details", "ERROR");
         }
     }, Qt::QueuedConnection);
 #endif
@@ -1230,15 +1221,16 @@ void MainWindow::exportNodePositions(const QString& filepath) {
     }
     
     QTextStream out(&file);
-    out << "NodeID,X,Y,Type\n";
+    out << "NodeID,X,Y,Z\n";  // Changed from NodeID,X,Y,Type
     
     QVector<QPointF> positions = m_mapScene->getNodePositions();
     for (int i = 0; i < positions.size(); ++i) {
-        QString type = (i == 0) ? "Gateway" : "EndDevice";
+        // Gateway at index 0 with height 15m, end devices at 1.5m
+        double z = (i == 0) ? 15.0 : 1.5;
         out << i << "," 
             << positions[i].x() << "," 
             << positions[i].y() << "," 
-            << type << "\n";
+            << z << "\n";
     }
     
     file.close();
@@ -1261,12 +1253,11 @@ void MainWindow::exportObstacles(const QString& filepath) {
     }
     
     QTextStream out(&file);
-    out << "ObstacleID,CenterX,CenterY,Width,Height,AttenuationDB\n";
+    out << "X,Y,Width,Height,AttenuationDB\n";  // Simplified header
     
     for (int i = 0; i < obstacles.size(); ++i) {
         const ObstacleData& obs = obstacles[i];
-        out << i << "," 
-            << obs.x << "," 
+        out << obs.x << ","   // Removed ObstacleID column
             << obs.y << "," 
             << obs.width << "," 
             << obs.height << "," 
