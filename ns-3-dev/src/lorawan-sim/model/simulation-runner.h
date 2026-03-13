@@ -7,6 +7,7 @@
 #include "environment.h"
 #include "packet-recorder.h"
 #include "adr-ddqn.h"
+#include "adr-agents.h"
 #include <string>
 #include <memory>
 #include <map>
@@ -16,8 +17,9 @@ namespace lorawan {
 
 /**
  * ADR Method enumeration
+ * Matches the modes available in advanced-ddqn-per-adr-example.cc
  */
-enum class ADRMethod { OFF, ON, DDQN };
+enum class ADRMethod { OFF, ON, DDQN, PPO, MARL };
 
 /**
  * Main simulation runner class
@@ -44,8 +46,23 @@ private:
     NodeContainer m_gateways;
     std::vector<Ptr<LoraNetDevice>> m_endDevicesNetDevices;
     
-    // DDQN agents
+    // Basic DDQN agents (legacy)
     std::map<uint32_t, std::unique_ptr<DDQNPERADRAgent>> m_ddqnAgents;
+    
+    // Advanced DDQN agents (OptimizedDDQNAgent with DuelingQNetwork)
+    std::map<uint32_t, std::unique_ptr<OptimizedDDQNAgent>> m_optimizedDdqnAgents;
+    
+    // PPO agents
+    std::map<uint32_t, std::unique_ptr<PPOAgent>> m_ppoAgents;
+    
+    // MARL agents
+    std::map<uint32_t, std::unique_ptr<MARLAgent>> m_marlAgents;
+    
+    // Device history tracking for advanced ADR methods
+    std::map<uint32_t, DeviceHistory> m_deviceHistories;
+    
+    // Channel tracking for MARL coordination
+    std::map<uint32_t, uint8_t> m_currentChannels;
     
     // ADR tracking
     std::map<uint32_t, double> m_nodeCurrentTxPowers;
@@ -63,6 +80,8 @@ private:
     // ADR functions
     void ApplyADRDecision(uint32_t nodeId);
     void UpdateDDQNADR(uint32_t nodeId, double snr, bool packetSuccess);
+    void UpdatePPOADR(uint32_t nodeId, double snr, bool packetSuccess);
+    void UpdateMARLADR(uint32_t nodeId, double snr, bool packetSuccess);
     static void OnTxPowerChange(std::string context, double oldValue, double newValue);
     static void OnDataRateChange(std::string context, uint8_t oldValue, uint8_t newValue);
     
