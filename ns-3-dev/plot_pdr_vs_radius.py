@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""PDR vs Radius comparison plot."""
+"""PDR vs Radius comparison plot — smooth curves, saved as PNG + EPS."""
 import pandas as pd
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
 from pathlib import Path
+from scipy.interpolate import make_interp_spline
 
 ADR_KEYS    = ["no_adr", "classical_adr", "ddqn_adr", "ppo_adr", "marl_adr"]
 ADR_LABELS  = {"no_adr": "No ADR", "classical_adr": "Classical",
@@ -15,11 +17,20 @@ ADR_COLORS  = {"no_adr": "#e74c3c", "classical_adr": "#e67e22",
 ADR_MARKERS = {"no_adr": "o", "classical_adr": "s",
                "ddqn_adr": "^", "ppo_adr": "D", "marl_adr": "P"}
 
-# TC groupings to plot side by side
 GROUPS = {
     "Baseline — no interference\n(TC 1: 30m, TC 2: 100m, TC 3: 500m)": [1, 2, 3],
     "Building-size sweep — WiFi scales with radius\n(TC 4–8: 50→500m)": [4, 5, 6, 7, 8],
 }
+
+
+def smooth(x, y, n_pts=300):
+    """Cubic spline; falls back to lower degree if too few points."""
+    if len(x) < 2:
+        return x, y
+    k = min(3, len(x) - 1)
+    spl = make_interp_spline(x.astype(float), y, k=k)
+    xs = np.linspace(x[0], x[-1], n_pts)
+    return xs, spl(xs)
 
 
 def load_pdr(tc_ids):
@@ -43,12 +54,18 @@ def load_pdr(tc_ids):
 
 plt.rcParams.update({
     "font.size": 10,
+    "axes.titlesize": 11,
+    "axes.labelsize": 10,
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
+    "legend.fontsize": 8.5,
     "axes.spines.top": False,
     "axes.spines.right": False,
     "axes.grid": True,
     "grid.alpha": 0.3,
     "grid.linestyle": "--",
     "axes.axisbelow": True,
+    "figure.dpi": 150,
 })
 
 fig, axes = plt.subplots(1, 2, figsize=(14, 5.5))
@@ -61,18 +78,28 @@ for ax, (group_name, tc_ids) in zip(axes, GROUPS.items()):
 
     for key in ADR_KEYS:
         sub = df[df["adr_key"] == key].sort_values("radius")
-        x   = sub["radius"].values
-        y   = sub["mean"].values
-        lo  = sub["ci_lo"].values
-        hi  = sub["ci_hi"].values
-        ax.plot(x, y,
-                color=ADR_COLORS[key], marker=ADR_MARKERS[key],
-                linewidth=2.2, markersize=8,
+        x  = sub["radius"].values
+        y  = sub["mean"].values
+        lo = sub["ci_lo"].values
+        hi = sub["ci_hi"].values
+
+        xs, ys  = smooth(x, y)
+        _,  los = smooth(x, lo)
+        _,  his = smooth(x, hi)
+
+        # Smooth line
+        ax.plot(xs, ys,
+                color=ADR_COLORS[key], linewidth=2.2,
                 label=ADR_LABELS[key], zorder=4)
-        ax.fill_between(x, lo, hi,
+        # Original data markers
+        ax.scatter(x, y,
+                   color=ADR_COLORS[key], marker=ADR_MARKERS[key],
+                   s=50, zorder=5)
+        # Smooth CI band
+        ax.fill_between(xs, los, his,
                         color=ADR_COLORS[key], alpha=0.12, zorder=2)
 
-    # TC annotations below x-axis ticks
+    # TC annotations
     y_floor = max(0, df["mean"].min() - 12)
     for tc_id in tc_ids:
         subrow = df[(df["tc_id"] == tc_id) & (df["adr_key"] == "ddqn_adr")]
@@ -95,8 +122,15 @@ for ax, (group_name, tc_ids) in zip(axes, GROUPS.items()):
     ax.legend(loc="lower left", fontsize=8.5, frameon=True)
 
 fig.tight_layout()
-out = Path("test_case_results/plots/pdr_vs_radius.png")
-out.parent.mkdir(parents=True, exist_ok=True)
-fig.savefig(out, bbox_inches="tight", dpi=150)
+
+out_dir = Path("test_case_results/plots")
+out_dir.mkdir(parents=True, exist_ok=True)
+
+for ext in (".png", ".eps"):
+    out = out_dir / f"pdr_vs_radius{ext}"
+    fig.savefig(out, bbox_inches="tight",
+                dpi=150 if ext == ".png" else None,
+                format=ext.lstrip("."))
+    print(f"Saved → {out}")
+
 plt.close(fig)
-print(f"Saved → {out}")
