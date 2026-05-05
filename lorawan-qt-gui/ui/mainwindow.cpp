@@ -970,9 +970,9 @@ void MainWindow::runAnalysisScript() {
     
     process.start("python3", arguments);
     
-    if (!process.waitForFinished(30000)) { // 30 second timeout
-        logMessage("Analysis script timed out or failed to start", "ERROR");
-        m_resultsText->setPlainText("Analysis failed: timeout or script error");
+    if (!process.waitForFinished(-1)) {
+        logMessage("Analysis script failed to finish", "ERROR");
+        m_resultsText->setPlainText("Analysis failed: script error");
         return;
     }
     

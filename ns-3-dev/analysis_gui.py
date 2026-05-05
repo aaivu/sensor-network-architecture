@@ -438,17 +438,18 @@ class LoRaWANADRAnalyzer:
         if not all_stats:
             print("❌ No data found for analysis!")
             return
+
+        # Generate the visualization early so the plot is saved even if a
+        # caller stops reading the process output later.
+        try:
+            self.create_performance_visualizations(all_stats, output_dir)
+        except Exception as e:
+            print(f"⚠  Error creating visualizations: {e}")
         
         # Print reports
         self.print_executive_summary(all_stats)
         self.print_device_by_device_analysis(device_comparison)
         self.generate_statistical_report(all_stats)
-        
-        # Generate visualizations and save to run-specific directory
-        try:
-            self.create_performance_visualizations(all_stats, output_dir)
-        except Exception as e:
-            print(f"⚠  Error creating visualizations: {e}")
         
         # Export results
         self.export_results(all_stats, device_comparison)
