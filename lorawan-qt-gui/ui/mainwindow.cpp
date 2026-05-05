@@ -22,6 +22,7 @@
 #include <QJsonArray>
 #include <QDesktopServices>
 #include <QUrl>
+#include <algorithm>
 
 #ifdef ENABLE_NS3
 #include "ns3/core-module.h"
@@ -31,6 +32,7 @@
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , m_simulationRunning(false)
+    , m_lastSimulationSucceeded(false)
     , m_logFile(nullptr)
     , m_logStream(nullptr)
 {
@@ -499,6 +501,7 @@ void MainWindow::onRunSimulation() {
     }
     
     m_simulationRunning = true;
+    m_lastSimulationSucceeded = false;
     m_runButton->setEnabled(false);
     m_stopButton->setEnabled(true);
     m_progressBar->setValue(0);
@@ -599,6 +602,20 @@ void MainWindow::organizeSimulationFiles(const QString& ns3Dir, const QString& c
 }
 
 void MainWindow::runSimulationThread() {
+    auto reportProgress = [this](int value, const QString& status = QString()) {
+        QMetaObject::invokeMethod(this, [this, value, status]() {
+            // Keep progress monotonic while the simulation is running.
+            if (value > m_progressBar->value()) {
+                m_progressBar->setValue(value);
+            }
+            if (!status.isEmpty()) {
+                updateStatusBar(status);
+            }
+        }, Qt::QueuedConnection);
+    };
+
+    reportProgress(5, "Preparing simulation...");
+
     QMetaObject::invokeMethod(this, [this]() {
         logMessage("Building ns-3 simulation command...", "INFO");
     }, Qt::QueuedConnection);
@@ -611,9 +628,13 @@ void MainWindow::runSimulationThread() {
     QMetaObject::invokeMethod(this, [this, outputCsvFile]() {
         logMessage("Output CSV file: " + outputCsvFile, "INFO");
     }, Qt::QueuedConnection);
+
+    reportProgress(12, "Building command...");
     
 #ifdef ENABLE_NS3
     try {
+        reportProgress(20, "Initializing ns-3 runner...");
+
         QMetaObject::invokeMethod(this, [this]() {
             logMessage("Running ns-3 compiled simulation...", "INFO");
         }, Qt::QueuedConnection);
@@ -655,6 +676,8 @@ void MainWindow::runSimulationThread() {
         // Run simulation(s)
         for (int i = 0; i < adrModes.size(); i++) {
             QString currentAdrMode = adrModes[i];
+            int stepBase = 25 + static_cast<int>((40.0 * i) / std::max(1, adrModes.size()));
+            reportProgress(stepBase, QString("Running simulation mode %1...").arg(currentAdrMode));
             
             ns3::lorawan::ADRMethod adrMethod;
             if (currentAdrMode == "off") {
@@ -695,6 +718,9 @@ void MainWindow::runSimulationThread() {
             
             // Run simulation
             runner.Run();
+
+            int stepDone = 30 + static_cast<int>((50.0 * (i + 1)) / std::max(1, adrModes.size()));
+            reportProgress(stepDone, QString("Completed mode %1").arg(currentAdrMode));
             
             QMetaObject::invokeMethod(this, [this, currentAdrMode, i, adrModes]() {
                 if (adrModes.size() > 1) {
@@ -707,6 +733,7 @@ void MainWindow::runSimulationThread() {
         }
         
         m_currentOutputFile = outputCsvFile;
+        reportProgress(85, "Simulation completed, preparing analysis...");
         
     } catch (const std::exception& e) {
         QString errorMsg = QString("Simulation error: %1").arg(e.what());
@@ -717,6 +744,8 @@ void MainWindow::runSimulationThread() {
     }
 #else
     // Fallback: Run ns-3 via command line
+    reportProgress(20, "Initializing command-line run...");
+
     QMetaObject::invokeMethod(this, [this]() {
         logMessage("ns-3 not compiled in. Running via command line...", "INFO");
     }, Qt::QueuedConnection);
@@ -737,6 +766,7 @@ void MainWindow::runSimulationThread() {
     }
     
     if (ns3Dir.isEmpty()) {
+        m_lastSimulationSucceeded = false;
         QMetaObject::invokeMethod(this, [this]() {
             logMessage("ERROR: Could not find ns-3-dev directory", "ERROR");
         }, Qt::QueuedConnection);
@@ -794,13 +824,28 @@ void MainWindow::runSimulationThread() {
         logMessage("Executing command:", "INFO");
         logMessage(command, "CMD");
     }, Qt::QueuedConnection);
+
+    reportProgress(30, "Launching ns-3 process...");
     
     // Execute command
     QProcess process;
     process.setWorkingDirectory(ns3Dir);
+
+    // On macOS, prefer Command Line Tools to avoid Xcode license gate in non-interactive GUI runs.
+    if (QDir("/Library/Developer/CommandLineTools").exists()) {
+        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+        env.insert("DEVELOPER_DIR", "/Library/Developer/CommandLineTools");
+        process.setProcessEnvironment(env);
+
+        QMetaObject::invokeMethod(this, [this]() {
+            logMessage("Using DEVELOPER_DIR=/Library/Developer/CommandLineTools", "INFO");
+        }, Qt::QueuedConnection);
+    }
+
     process.start("/bin/bash", QStringList() << "-c" << command);
     
     if (!process.waitForStarted()) {
+        m_lastSimulationSucceeded = false;
         QMetaObject::invokeMethod(this, [this, adrMode]() {
             logMessage(QString("Failed to start ns-3 process for ADR mode '%1'").arg(adrMode), "ERROR");
         }, Qt::QueuedConnection);
@@ -810,10 +855,13 @@ void MainWindow::runSimulationThread() {
     QMetaObject::invokeMethod(this, [this]() {
         logMessage("ns-3 process started, waiting for completion...", "INFO");
     }, Qt::QueuedConnection);
+
+    reportProgress(45, "Simulation running...");
     
     // Wait for completion (with timeout - longer for 'all' mode which runs 5 simulations)
     int timeoutMs = (adrMode == "all") ? 3000000 : 600000;  // 50 min for 'all', 10 min for single
     if (!process.waitForFinished(timeoutMs)) {
+        m_lastSimulationSucceeded = false;
         QMetaObject::invokeMethod(this, [this, adrMode]() {
             logMessage(QString("Simulation timeout or error for ADR mode '%1'").arg(adrMode), "ERROR");
         }, Qt::QueuedConnection);
@@ -841,6 +889,11 @@ void MainWindow::runSimulationThread() {
     }, Qt::QueuedConnection);
     
     bool simulationSucceeded = (exitCode == 0);
+    m_lastSimulationSucceeded = simulationSucceeded;
+
+    if (simulationSucceeded) {
+        reportProgress(78, "Collecting simulation outputs...");
+    }
     
     if (!simulationSucceeded) {
         QMetaObject::invokeMethod(this, [this, adrMode]() {
@@ -856,6 +909,10 @@ void MainWindow::runSimulationThread() {
         }
     } else {
         organizeSimulationFiles(ns3Dir, csvDir, adrMode, csvFilename);
+    }
+
+    if (simulationSucceeded) {
+        reportProgress(85, "Simulation completed, preparing analysis...");
     }
     
     // Final status
@@ -889,6 +946,15 @@ void MainWindow::runAnalysisScript() {
     
     // Results directory
     QString resultsDir = m_outputDirectory + "/results-csv";
+
+    QDir resultsPath(resultsDir);
+    QStringList csvInputs = resultsPath.entryList(QStringList() << "*.csv", QDir::Files);
+    if (csvInputs.isEmpty()) {
+        logMessage("No CSV files found for analysis in: " + resultsDir, "ERROR");
+        m_resultsText->setPlainText("Analysis skipped: no CSV result files were generated.\n"
+                                   "Check simulation.log for the ns-3 failure reason.");
+        return;
+    }
     
     logMessage("Analysis script: " + analysisScript, "INFO");
     logMessage("Results directory: " + resultsDir, "INFO");
@@ -927,6 +993,9 @@ void MainWindow::runAnalysisScript() {
     if (output.isEmpty()) {
         m_resultsText->setPlainText("Analysis completed but produced no output");
         logMessage("Analysis produced no output", "WARNING");
+    } else if (output.contains("No data found for analysis!")) {
+        m_resultsText->setPlainText(output);
+        logMessage("Analysis finished but did not find usable datasets", "ERROR");
     } else {
         m_resultsText->setPlainText(output);
         logMessage("Analysis completed successfully", "SUCCESS");
@@ -951,6 +1020,16 @@ void MainWindow::onSimulationFinished() {
     logMessage("========================================", "INFO");
     logMessage("Simulation thread finished", "INFO");
     logMessage("Processing results...", "INFO");
+
+    if (!m_lastSimulationSucceeded) {
+        updateStatusBar("Simulation failed");
+        m_exportResultsButton->setEnabled(false);
+        m_visualizeButton->setEnabled(false);
+        logMessage("Simulation failed, skipping analysis", "ERROR");
+        logMessage("Check simulation.log for the root cause and rerun.", "ERROR");
+        logMessage("========================================", "ERROR");
+        return;
+    }
     
     updateStatusBar("Simulation completed!");
     

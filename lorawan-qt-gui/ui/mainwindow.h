@@ -119,6 +119,7 @@ private:
     // Simulation state
     QFutureWatcher<void>* m_simulationWatcher;
     bool m_simulationRunning;
+    bool m_lastSimulationSucceeded;
     QString m_currentOutputFile;
     QString m_outputDirectory;
     QFile* m_logFile;

@@ -20,6 +20,27 @@ class LoRaWANADRAnalyzer:
         self.datasets_folder = Path(datasets_folder)
         self.device_data = {}
         self.summary_stats = {}
+        self._missing_energy_warned = set()
+        self.adr_types = ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr']
+
+    def _get_energy_metrics(self, df, device_id, adr_type):
+        """Return total and per-packet energy, with schema fallback for older datasets."""
+        energy_columns = [
+            'energy_consumed_mJ',
+            'energy_mJ',
+            'energyConsumed_mJ',
+        ]
+
+        for col in energy_columns:
+            if col in df.columns:
+                return df[col].sum(), df[col].mean()
+
+        # Older CSVs may not include energy columns; keep analysis running with NaN values.
+        key = (adr_type, device_id)
+        if key not in self._missing_energy_warned:
+            print(f"  ⚠️ Missing energy column for {adr_type} device {device_id}; using NaN energy metrics")
+            self._missing_energy_warned.add(key)
+        return np.nan, np.nan
         
     def load_datasets(self):
         """Load all CSV datasets for analysis"""
@@ -71,6 +92,7 @@ class LoRaWANADRAnalyzer:
         # Filter out invalid SNR values (-999 indicates failed reception)
         successful_packets = df[df['snr_db'] != -999.0]
         failed_packets = df[df['snr_db'] == -999.0]
+        total_energy, energy_per_packet = self._get_energy_metrics(df, device_id, adr_type)
         
         stats = {
             'device_id': device_id,
@@ -91,8 +113,8 @@ class LoRaWANADRAnalyzer:
             'distance': df['distance_m'].iloc[0] if len(df) > 0 else 0,
             'position_x': df['tx_x'].iloc[0] if len(df) > 0 else 0,
             'position_y': df['tx_y'].iloc[0] if len(df) > 0 else 0,
-            'total_energy': df['energy_consumed_mJ'].sum(),
-            'energy_per_packet': df['energy_consumed_mJ'].mean()
+            'total_energy': total_energy,
+            'energy_per_packet': energy_per_packet
         }
         
         return stats
@@ -104,17 +126,31 @@ class LoRaWANADRAnalyzer:
         all_stats = []
         device_comparison = {}
         
-        # Get all unique device IDs
-        all_devices = set()
-        for adr_type in self.device_data:
-            all_devices.update(self.device_data[adr_type].keys())
-        
-        all_devices = sorted(all_devices)
+        # For fair ADR comparison, only analyze devices present in every ADR dataset.
+        device_sets = [set(self.device_data.get(adr_type, {}).keys()) for adr_type in self.adr_types if self.device_data.get(adr_type)]
+        if not device_sets:
+            return all_stats, device_comparison
+
+        common_devices = set.intersection(*device_sets)
+        all_seen_devices = set.union(*device_sets)
+
+        if common_devices:
+            all_devices = sorted(common_devices)
+            excluded = sorted(all_seen_devices - common_devices)
+            print(f"  ✅ Using common devices across ADR methods: {len(all_devices)}")
+            if excluded:
+                preview = ", ".join(excluded[:10])
+                suffix = "..." if len(excluded) > 10 else ""
+                print(f"  ⚠️ Excluding non-common devices ({len(excluded)}): {preview}{suffix}")
+        else:
+            # Fallback to union only if there is no overlap at all.
+            all_devices = sorted(all_seen_devices)
+            print("  ⚠️ No common devices found across ADR methods; falling back to union (comparison may be skewed)")
         
         # Analyze each device for each ADR type
         for device_id in all_devices:
             device_comparison[device_id] = {}
-            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr']:
+            for adr_type in self.adr_types:
                 stats = self.analyze_device_performance(device_id, adr_type)
                 if stats:
                     all_stats.append(stats)
@@ -142,7 +178,7 @@ class LoRaWANADRAnalyzer:
         print("\n📊 OVERALL PERFORMANCE BY ADR TYPE:")
         print("-" * 50)
         
-        for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr']:
+        for adr_type in self.adr_types:
             if adr_type in adr_summary.index:
                 row = adr_summary.loc[adr_type]
                 adr_name = {
@@ -190,7 +226,7 @@ class LoRaWANADRAnalyzer:
             print(f"\n{'ADR Method':<15} {'PDR (%)':<8} {'Avg SNR':<10} {'TX Power':<10} {'SF':<5} {'Energy (mJ)':<12}")
             print("-" * 70)
             
-            for adr_type in ['no_adr', 'classical_adr', 'ddqn_adr', 'ppo_adr', 'marl_adr']:
+            for adr_type in self.adr_types:
                 if adr_type in device_data:
                     stats = device_data[adr_type]
                     adr_name = {
@@ -289,7 +325,11 @@ class LoRaWANADRAnalyzer:
         plt.savefig(output_file, dpi=300, bbox_inches='tight')
         print(f"  ✅ Performance charts saved as: {output_file}")
         
-        plt.show()
+        # Avoid blocking in non-interactive terminal runs.
+        if os.environ.get('DISPLAY'):
+            plt.show()
+        else:
+            plt.close(fig)
     
     def generate_statistical_report(self, all_stats):
         """Generate detailed statistical report"""
