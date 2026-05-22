@@ -1,0 +1,77 @@
+# ------------------------------------------------------------------
+# C++ / CMake build artefacts
+# ------------------------------------------------------------------
+build/
+build-*/
+cmake-cache/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.so.*
+*.dylib
+*.exe
+
+# ns-3 output / scratch
+*.pcap
+*.xml
+
+# Qt auto-generated
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+*.moc
+*.pro.user
+*.pro.user.*
+LoRaWANSimGUI_autogen/
+
+# ------------------------------------------------------------------
+# Python
+# ------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+dist/
+*.egg-info/
+.eggs/
+venv/
+.venv/
+env/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# ------------------------------------------------------------------
+# Simulation outputs (large — store elsewhere or use Git LFS)
+# ------------------------------------------------------------------
+simulation_results/
+*.csv
+*.log
+results_seed*.log
+
+# ------------------------------------------------------------------
+# macOS
+# ------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# ------------------------------------------------------------------
+# Editors
+# ------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
