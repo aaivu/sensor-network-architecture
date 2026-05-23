@@ -1,0 +1,4 @@
+[submodule "ns3"]
+	path = ns3
+	url = https://github.com/aaivu/sensor-network-architecture.git
+	branch = multirl1.2lte

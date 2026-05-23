@@ -23,6 +23,11 @@ Makefile
 *.pcap
 *.xml
 
+# ns-3 build artefacts inside submodule (don't track built objects)
+ns3/ns-3-dev/build/
+ns3/ns-3-dev/cmake-cache/
+ns3/ns-3-dev/.lock-ns3*
+
 # Qt auto-generated
 moc_*.cpp
 ui_*.h

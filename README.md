@@ -1,199 +1,195 @@
-# LoRaWAN DDQN-PER Adaptive Data Rate
+# LoRaWAN Multi-Algorithm RL ADR
 
-A research implementation of Dueling DDQN with Prioritized Experience Replay (PER) for Adaptive Data Rate (ADR) optimization in LoRaWAN networks, built on top of the [ns-3](https://www.nsnam.org/) network simulator.
+> **Coordinated Multi-Agent Reinforcement Learning for Adaptive Data Rate Optimisation in Dense LoRaWAN Networks**
 
-This repository accompanies the FYP research "Coordinated Multi-Agent Reinforcement Learning for Adaptive Data Rate Optimization in Dense LoRaWAN Networks" (University of Moratuwa / University of Oulu).
+A self-contained research codebase that implements and compares **seven ADR strategies** — from the classical LoRaWAN 1.0.4 algorithm to a Centralised-Training / Decentralised-Execution (CTDE) multi-agent system with Graph Attention Networks — inside a realistic urban ns-3 simulation with Wi-Fi and LTE interference.
+
+This repository accompanies the paper *"Coordinated Multi-Agent Reinforcement Learning for Adaptive Data Rate Optimisation in Dense LoRaWAN Networks"*.
 
 ---
 
-## Repository Structure
+## Algorithms at a glance
+
+| # | Mode flag | Algorithm | Notes |
+|---|-----------|-----------|-------|
+| 0 | `off`        | **No ADR** — static SF7 / 14 dBm | baseline |
+| 1 | `on`         | **Classical ADR** (LoRaWAN 1.0.4) | SNR-margin step rule |
+| 2 | `ddqn`       | **DDQN-PER** — Dueling DQN + Prioritised Experience Replay | single-agent |
+| 3 | `ppo`        | **PPO** — Proximal Policy Optimisation | single-agent |
+| 4 | `marl`       | **MARL** — Independent Q-Learning + coordination signal | multi-agent |
+| 5 | `marl_ppo`   | **MARL-PPO** — Independent PPO with coordination | multi-agent |
+| 6 | `mappo_gat`  | **MAPPO-GAT** — Multi-Agent PPO + Graph Attention (CTDE) | multi-agent CTDE |
+
+---
+
+## Repository layout
 
 ```
-lorawan-ddqn-adr/
-├── sim/                            # ns-3 C++ simulation
-│   ├── advanced-ddqn-per-adr-example.cc   # Main simulation file (DDQN / Classical / No-ADR)
+lorawan-rl-adr/
+├── ns3/                            ← git submodule: ns-3.45 + lorawan module
+│   ├── ns-3-dev/                   ← ns-3 source tree (built in place)
+│   │   └── src/lorawan/examples/   ← sim files are copied here by setup.sh
+│   └── lorawan-qt-gui/             ← Qt GUI source (within submodule)
+├── sim/                            ← our C++ simulation source (modular headers)
+│   ├── lorawan_rl_adr.cc           ← entry point: main() + RunSimulation()
+│   └── include/                    ← 15 header files (one concern each)
+├── analysis/
+│   ├── analysis.py                 ← PDR / energy / fairness / stability plots
 │   └── README.md
-├── analysis/                       # Python post-processing
-│   └── analysis.py                 # PDR, energy, fairness, stability analysis
-├── gui/                            # Qt desktop GUI
+├── gui/                            ← Qt GUI source copy (standalone build)
 │   ├── CMakeLists.txt
 │   ├── build.sh
 │   ├── main.cpp
-│   ├── RUNNING.md
-│   └── ui/
-│       ├── mainwindow.{cpp,h}
-│       └── mapscene.{cpp,h}
-├── requirements.txt                # Python dependencies
+│   └── ui/  mainwindow.{cpp,h}  mapscene.{cpp,h}
+├── setup.sh                        ← one-shot automated setup script
+├── run.sh                          ← convenience simulation launcher
+├── requirements.txt                ← Python dependencies
 └── README.md
 ```
 
 ---
 
-## Quick Start
+## Quick start
 
-### 1 — Prerequisites
-
-| Tool | Version tested | Install |
-|------|---------------|---------|
-| ns-3 | 3.40+ | see §2 below |
-| GCC / Clang | ≥ 11 / ≥ 13 | system package manager |
-| CMake | ≥ 3.16 | `brew install cmake` / `apt install cmake` |
-| Qt | 5.15 or 6.x | `brew install qt` / `apt install qt6-base-dev` |
-| Python | ≥ 3.9 | system / conda |
-| pip packages | — | `pip install -r requirements.txt` |
-
----
-
-### 2 — Build ns-3 with the LoRaWAN Module
-
-The simulation requires ns-3 with the `lorawan` contrib module.
+### Step 1 — Clone with submodule
 
 ```bash
-# Clone ns-3
-git clone https://gitlab.com/nsnam/ns-3-dev.git
-cd ns-3-dev
-
-# Clone the lorawan contrib module into contrib/
-git clone https://github.com/signetlabdei/lorawan src/lorawan
-
-# Configure and build (Release mode for speed)
-./ns3 configure --enable-examples --enable-tests
-./ns3 build
+git clone --recursive https://github.com/<your-org>/lorawan-rl-adr.git
+cd lorawan-rl-adr
 ```
 
-> **macOS note**: If you use Anaconda, unset conda env vars before building to avoid header conflicts:
+> Already cloned without `--recursive`?
 > ```bash
-> export PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin
-> unset CONDA_PREFIX
-> ./ns3 configure --enable-examples
+> git submodule update --init --recursive
 > ```
 
 ---
 
-### 3 — Place the Simulation File
+### Step 2 — Install system dependencies
 
-Copy the example into ns-3's lorawan examples directory:
+| Tool | Min version | macOS (Homebrew) | Ubuntu / Debian |
+|------|------------|-----------------|-----------------|
+| GCC **or** Clang | GCC ≥ 11 / Clang ≥ 13 | `brew install gcc` | `apt install g++-12` |
+| CMake | 3.16 | `brew install cmake` | `apt install cmake` |
+| Python | 3.9 | `brew install python` | `apt install python3 python3-venv` |
+| Qt | 5.15 **or** 6.x | `brew install qt` | `apt install qt6-base-dev` |
+| ninja *(faster builds)* | any | `brew install ninja` | `apt install ninja-build` |
+
+> **macOS + Anaconda**: `setup.sh` automatically clears conda env vars before the ns-3 build to prevent CMake header conflicts.
+
+---
+
+### Step 3 — Run automated setup
 
 ```bash
-cp sim/advanced-ddqn-per-adr-example.cc \
-   ns-3-dev/src/lorawan/examples/
+chmod +x setup.sh run.sh
+./setup.sh
 ```
 
-Rebuild:
+`setup.sh` performs these steps automatically:
+
+| Step | What happens |
+|------|-------------|
+| 1 | `git submodule update --init --recursive` — fetches `ns3/` (~300 MB, **5–10 min**) |
+| 2 | Copies `sim/lorawan_rl_adr.cc` + `sim/include/` → `ns3/ns-3-dev/src/lorawan/examples/` |
+| 3 | Registers `lorawan_rl_adr` in the lorawan `CMakeLists.txt` |
+| 4 | `./ns3 configure --enable-examples --build-profile release` |
+| 5 | `./ns3 build lorawan_rl_adr` (**5–20 min** first time; incremental afterwards) |
+| 6 | Creates `.venv/` and installs `requirements.txt` |
+
+Skip individual steps: `./setup.sh --skip-ns3` or `./setup.sh --skip-python`
+
+---
+
+### Step 4 — Run a simulation
 
 ```bash
-cd ns-3-dev
-./ns3 build
+# Convenience wrapper (recommended)
+./run.sh --adr=ddqn --nDevices=20 --simTime=3600
+
+# All 7 algorithms in one go
+./run.sh --adr=all --nDevices=20 --simTime=3600
+
+# Equivalent direct ns-3 call
+cd ns3/ns-3-dev
+./ns3 run "lorawan_rl_adr --adr=mappo_gat --nDevices=50 --simTime=7200"
 ```
 
 ---
 
-### 4 — Run a Simulation
-
-All three ADR modes are controlled by the `--adr` flag.
+### Step 5 — Analyse results
 
 ```bash
-# From the ns-3-dev directory
-cd ns-3-dev
-
-# No ADR baseline
-./ns3 run "advanced-ddqn-per-adr-example --adr=off --nDevices=20 --radius=300 --simTime=3600"
-
-# Classical LoRaWAN ADR
-./ns3 run "advanced-ddqn-per-adr-example --adr=on  --nDevices=20 --radius=300 --simTime=3600"
-
-# DDQN-PER ADR
-./ns3 run "advanced-ddqn-per-adr-example --adr=ddqn --nDevices=20 --radius=300 --simTime=3600"
+source .venv/bin/activate
+python analysis/analysis.py --csv lorawan_rl_adr_results.csv
 ```
 
-#### Key Command-Line Arguments
+---
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--adr` | `ddqn` | ADR mode: `off`, `on`, `ddqn`, `ppo` |
-| `--nDevices` | `20` | Number of end devices |
-| `--radius` | `300` | Deployment radius (m) |
+## Simulation parameters
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--adr` | `ddqn` | ADR algorithm (see table above, or `all`) |
+| `--nDevices` | `20` | Number of LoRa end-devices |
+| `--radius` | `500` | Network radius (m) |
 | `--simTime` | `3600` | Simulation duration (s) |
-| `--appPeriod` | `30` | Application packet period (s) |
-| `--coordDivisor` | `3.0` | Coordination signal normalisation denominator |
-| `--rewardSchedule` | `0` | Reward weight schedule (0=adaptive, 1=uniform, 2=outcome-only) |
-| `--rngSeed` | `12345` | RNG seed for reproducible runs |
-
-Output CSV files are written to the working directory (e.g. `advanced-ddqn-per-adr-results.csv`).
+| `--rngSeed` | `12345` | RNG seed for reproducibility |
+| `--csvFile` | `lorawan_rl_adr_results.csv` | Output CSV filename |
+| `--coordDivisor` | `3.0` | Normalisation factor for coordination signal |
+| `--rewardSchedule` | `0` | `0` = adaptive · `1` = fixed · `2` = outcome-only |
 
 ---
 
-### 5 — Analyse Results
+## Qt GUI
 
-Install Python dependencies once:
-
-```bash
-pip install -r requirements.txt
-```
-
-Run the analysis script, pointing it at a results directory:
-
-```bash
-cd analysis
-python analysis.py --results-dir ../ns-3-dev/
-```
-
-The script generates:
-- Per-device PDR, energy, and SNR plots
-- Fairness (Jain's index) comparison
-- TX power and SF distribution bar charts
-- Summary statistics CSV
-
----
-
-### 6 — Qt GUI
-
-The GUI provides a visual interface for configuring and launching simulations without touching the command line.
+A desktop visualiser lets you inspect device positions, SF assignments, and per-device metrics.
 
 ```bash
 cd gui
-./build.sh          # Detects Qt5 or Qt6 automatically
+./build.sh            # auto-detects Qt5 or Qt6
 ./build/lorawan-gui
 ```
 
-See [gui/RUNNING.md](gui/RUNNING.md) for detailed build instructions and ns-3 integration notes.
+See [gui/README.md](gui/README.md) for full build options and troubleshooting.
 
 ---
 
-## Algorithms Implemented
+## Simulation source layout
 
-### DDQN-PER (`--adr=ddqn`)
+The C++ code is split into 15 focused headers included from a single `.cc` (single-TU model — no linker issues).
 
-- **Dueling DQN**: Separates state-value $V(s)$ and advantage $A(s,a)$ streams for more stable learning.
-- **Prioritized Experience Replay**: Samples transitions proportional to TD-error, biased towards informative experiences.
-- **Extended action space**: 48 actions covering SF (7–12), TX power (2–14 dBm), and channel selection (8 EU868 channels).
-- **12-dimensional state**: 11 local RF features + per-channel device-count coordination signal $n_\text{same}/N$.
-- **Congestion-adaptive reward**: Weights shift dynamically between outcome, interference, and stability objectives based on estimated congestion.
+| Header | Contents |
+|--------|----------|
+| `simple_ddqn.h` | `Experience`, `SimpleQNetwork`, `PrioritizedReplayBuffer`, `DDQNPERADRAgent` |
+| `device_history.h` | `DeviceHistory`, `CollisionIndicators`, `ChannelSelector` |
+| `dueling_ddqn.h` | `ExtendedActionSpace` (48 actions), `DuelingQNetwork`, `OptimizedDDQNAgent` |
+| `reward.h` | Congestion estimation, SF ceiling, reward functions, ablation globals |
+| `ppo_agent.h` | `PolicyNetwork`, `ValueNetwork`, `PPOAgent` |
+| `marl_agent.h` | `MARLAgent` (IQL + coordination signal) |
+| `marl_ppo_agent.h` | `MARLPPOActor`, `MARLPPOCritic`, `MARLPPOAgent` |
+| `mappo_gat_agent.h` | `GATLayer`, `MAPPOGATActor`, `MAPPOCentralizedCritic`, `MAPPOGATAgent` |
+| `globals.h` | Global state maps, `ADRMethod` enum, `UrbanObstacle`, `PacketRecord`, `DeviceMetrics` |
+| `environment.h` | `SetupUrbanEnvironment`, Wi-Fi/LTE interferers, `SamplePreTxRssi` |
+| `sim_core.h` | Transmission callbacks, `ApplyADRDecision`, `UpdateDDQNADR`, `UpdateOptimizedDDQN` |
+| `update_ppo.h` | `UpdateClassicalADR`, `UpdatePPOADR` |
+| `update_marl.h` | `UpdateMARLADR` |
+| `update_marl_ppo.h` | `UpdateMARLPPOADR` |
+| `update_mappo_gat.h` | `UpdateMAPPOGATADR` |
 
-### Classical ADR (`--adr=on`)
-
-Standard LoRaWAN ADR algorithm (LoRa Alliance TS002): SNR margin-based SF/TP adjustment with LinkADRReq MAC commands.
+Full details: [sim/README.md](sim/README.md)
 
 ---
 
 ## Reproducibility
 
-To exactly replicate a published result, fix the seed:
-
 ```bash
-./ns3 run "advanced-ddqn-per-adr-example \
-    --adr=ddqn --nDevices=40 --radius=100 \
-    --simTime=10000 --rngSeed=42"
-```
+# Fix the seed to reproduce a published result
+./run.sh --adr=ddqn --nDevices=40 --simTime=10000 --rngSeed=42
 
-For a sweep over multiple seeds:
-
-```bash
+# Sweep over seeds
 for seed in 42 123 456 789 1337; do
-  ./ns3 run "advanced-ddqn-per-adr-example \
-      --adr=ddqn --nDevices=40 --radius=100 \
-      --simTime=10000 --rngSeed=$seed" \
-      2>&1 | tee "results_seed${seed}.log"
+  ./run.sh --adr=all --nDevices=40 --simTime=10000 --rngSeed=$seed
 done
 ```
 
@@ -201,11 +197,12 @@ done
 
 ## Citation
 
-If you use this code in your work, please cite:
+If you use this code in academic work, please cite:
 
 ```bibtex
 @article{perera2026marl_adr,
-  title   = {Coordinated Multi-Agent Reinforcement Learning for Adaptive Data Rate Optimization in Dense {LoRaWAN} Networks},
+  title   = {Coordinated Multi-Agent Reinforcement Learning for Adaptive Data Rate
+             Optimisation in Dense {LoRaWAN} Networks},
   author  = {Perera, Nipuna and others},
   journal = {IEEE Access},
   year    = {2026}
@@ -216,4 +213,7 @@ If you use this code in your work, please cite:
 
 ## License
 
-This project is released for academic research use. The ns-3 simulator and the lorawan module are separately licensed under GPL-2.0 and MIT respectively — please consult their repositories.
+This project is released for academic research use.
+The ns-3 simulator is licensed under **GPL-2.0**.
+The lorawan module is licensed under **MIT**.
+Please consult their respective repositories for details.
