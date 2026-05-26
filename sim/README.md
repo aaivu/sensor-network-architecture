@@ -90,34 +90,34 @@ All commands assume `cd ns3/ns-3-dev` or `cd <ns-3-dev>` first.
 
 ```bash
 # All 7 algorithms in sequence (recommended for comparison)
-./ns3 run "lorawan_rl_adr --adr=all --nDevices=20 --simTime=3600"
+./ns3 run "lorawan_rl_adr --adr=all --nDevices=20 --simulationTime=3600"
 
 # DDQN-PER
-./ns3 run "lorawan_rl_adr --adr=ddqn --nDevices=20 --simTime=3600"
+./ns3 run "lorawan_rl_adr --adr=ddqn --nDevices=20 --simulationTime=3600"
 
 # PPO
-./ns3 run "lorawan_rl_adr --adr=ppo --nDevices=20 --simTime=3600"
+./ns3 run "lorawan_rl_adr --adr=ppo --nDevices=20 --simulationTime=3600"
 
 # MARL (IQL)
-./ns3 run "lorawan_rl_adr --adr=marl --nDevices=20 --simTime=3600"
+./ns3 run "lorawan_rl_adr --adr=marl --nDevices=20 --simulationTime=3600"
 
 # MARL-PPO
-./ns3 run "lorawan_rl_adr --adr=marl_ppo --nDevices=20 --simTime=3600"
+./ns3 run "lorawan_rl_adr --adr=marl_ppo --nDevices=20 --simulationTime=3600"
 
 # MAPPO-GAT (CTDE)
-./ns3 run "lorawan_rl_adr --adr=mappo_gat --nDevices=20 --simTime=3600"
+./ns3 run "lorawan_rl_adr --adr=mappo_gat --nDevices=20 --simulationTime=3600"
 
 # Classical ADR
-./ns3 run "lorawan_rl_adr --adr=on --nDevices=20 --simTime=3600"
+./ns3 run "lorawan_rl_adr --adr=on --nDevices=20 --simulationTime=3600"
 
 # No ADR baseline
-./ns3 run "lorawan_rl_adr --adr=off --nDevices=20 --simTime=3600"
+./ns3 run "lorawan_rl_adr --adr=off --nDevices=20 --simulationTime=3600"
 ```
 
 Or use the repo-level wrapper from any directory:
 
 ```bash
-./run.sh --adr=ddqn --nDevices=20 --simTime=3600
+./run.sh --adr=ddqn --nDevices=20 --simulationTime=3600
 ```
 
 ---
@@ -129,7 +129,7 @@ Or use the repo-level wrapper from any directory:
 | `--adr` | `ddqn` | Algorithm (see above, or `all`) |
 | `--nDevices` | `20` | Number of end-devices |
 | `--radius` | `500` | Deployment radius (m) |
-| `--simTime` | `3600` | Simulation duration (s) |
+| `--simulationTime` | `300` | Simulation duration (s) |
 | `--rngSeed` | `12345` | RNG seed |
 | `--csvFile` | `lorawan_rl_adr_results.csv` | Output filename |
 | `--coordDivisor` | `3.0` | Normalisation divisor for coordination signal |

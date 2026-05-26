@@ -93,6 +93,3 @@ void UpdateOptimizedDDQN(uint32_t nodeId, double snr, bool packetSuccess, double
 void WriteCSVOutput(const std::string& filename);
 void WriteEnvironmentVisualization(const std::string& baseFilename, double radius, uint32_t nDevices);
 void SetupLTEMobileInterferers(double radius, uint32_t nInterferers);
-
-/**
- * Set up simplified urban environment with virtual obstacles

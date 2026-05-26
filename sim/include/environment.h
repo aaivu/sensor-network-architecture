@@ -2,7 +2,6 @@
 #pragma once
 // Environment: SetupUrbanEnvironment, SetupWiFiInterferers, SetupLTEMobileInterferers, SamplePreTxRssi
 
- */
 void SetupUrbanEnvironment(double radius) {
     if (!enableEnvironmentalModeling) return;
     

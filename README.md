@@ -105,14 +105,14 @@ Skip individual steps: `./setup.sh --skip-ns3` or `./setup.sh --skip-python`
 
 ```bash
 # Convenience wrapper (recommended)
-./run.sh --adr=ddqn --nDevices=20 --simTime=3600
+./run.sh --adr=ddqn --nDevices=20 --simulationTime=3600
 
 # All 7 algorithms in one go
-./run.sh --adr=all --nDevices=20 --simTime=3600
+./run.sh --adr=all --nDevices=20 --simulationTime=3600
 
 # Equivalent direct ns-3 call
 cd ns3/ns-3-dev
-./ns3 run "lorawan_rl_adr --adr=mappo_gat --nDevices=50 --simTime=7200"
+./ns3 run "lorawan_rl_adr --adr=mappo_gat --nDevices=50 --simulationTime=7200"
 ```
 
 ---
@@ -133,7 +133,7 @@ python analysis/analysis.py --csv lorawan_rl_adr_results.csv
 | `--adr` | `ddqn` | ADR algorithm (see table above, or `all`) |
 | `--nDevices` | `20` | Number of LoRa end-devices |
 | `--radius` | `500` | Network radius (m) |
-| `--simTime` | `3600` | Simulation duration (s) |
+| `--simulationTime` | `300` | Simulation duration (s) |
 | `--rngSeed` | `12345` | RNG seed for reproducibility |
 | `--csvFile` | `lorawan_rl_adr_results.csv` | Output CSV filename |
 | `--coordDivisor` | `3.0` | Normalisation factor for coordination signal |
@@ -185,11 +185,11 @@ Full details: [sim/README.md](sim/README.md)
 
 ```bash
 # Fix the seed to reproduce a published result
-./run.sh --adr=ddqn --nDevices=40 --simTime=10000 --rngSeed=42
+./run.sh --adr=ddqn --nDevices=40 --simulationTime=10000 --rngSeed=42
 
 # Sweep over seeds
 for seed in 42 123 456 789 1337; do
-  ./run.sh --adr=all --nDevices=40 --simTime=10000 --rngSeed=$seed
+  ./run.sh --adr=all --nDevices=40 --simulationTime=10000 --rngSeed=$seed
 done
 ```
 

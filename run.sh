@@ -6,7 +6,7 @@
 #
 # Usage examples:
 #   ./run.sh --adr=ddqn
-#   ./run.sh --adr=all  --nDevices=50 --simTime=7200
+#   ./run.sh --adr=all  --nDevices=50 --simulationTime=7200
 #   ./run.sh --adr=ppo  --nDevices=20 --rngSeed=42
 #   ./run.sh --help
 # =============================================================================
@@ -44,7 +44,7 @@ ${BOLD}ADR Modes (--adr=<mode>):${NC}
 ${BOLD}Common flags:${NC}
   --nDevices=N        Number of end-devices           (default: 20)
   --radius=M          Network radius in metres         (default: 500)
-  --simTime=S         Simulation duration in seconds   (default: 3600)
+  --simulationTime=S  Simulation duration in seconds   (default: 300)
   --rngSeed=K         RNG seed for reproducibility     (default: 12345)
   --coordDivisor=D    Coordination-signal divisor       (default: 3.0)
   --rewardSchedule=R  0=adaptive  1=fixed  2=outcome   (default: 0)
@@ -52,7 +52,7 @@ ${BOLD}Common flags:${NC}
 
 ${BOLD}Examples:${NC}
   ./run.sh --adr=ddqn
-  ./run.sh --adr=all --nDevices=50 --simTime=7200
+  ./run.sh --adr=all --nDevices=50 --simulationTime=7200
   ./run.sh --adr=mappo_gat --nDevices=30 --rngSeed=42
 
 ${BOLD}Tip:${NC} Run ./setup.sh first if you haven't already.

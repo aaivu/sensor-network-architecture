@@ -76,7 +76,7 @@ The application opens a window with:
 
 ### Loading results
 
-1. Run the simulation: `./run.sh --adr=all --nDevices=20 --simTime=3600`
+1. Run the simulation: `./run.sh --adr=all --nDevices=20 --simulationTime=3600`
 2. Open the GUI: `./build/lorawan-gui`
 3. **File → Open CSV** and select the output file (e.g. `lorawan_rl_adr_results.csv`)
 
